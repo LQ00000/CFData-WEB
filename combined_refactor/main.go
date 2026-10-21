@@ -243,6 +243,7 @@ func main() {
 			return
 		}
 		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write(data)
 	})
 
@@ -253,6 +254,7 @@ func main() {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write(data)
 	}))
 	http.HandleFunc("/ws", requireAuth(handleWebSocket))
