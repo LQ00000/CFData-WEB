@@ -1647,6 +1647,7 @@
 
             <div class="settings-title" style="margin-top:12px;">🌐 管理面代理</div>
             <div class="upload-status" id="proxyStatusText">未启用（可用系统环境变量代理）</div>
+            <div id="proxySourceText" style="font-size:11px;color:var(--text-secondary);margin-top:2px;"></div>
             <input id="proxyInput" type="text" placeholder="socks5://127.0.0.1:1080 或 http://127.0.0.1:8080" style="width:100%;margin-top:6px;">
             <div class="theme-options" style="display:flex;gap:8px;margin-top:6px;">
                 <button class="menu-btn" style="flex:1;" onclick="saveManagementProxy()">保存</button>
@@ -2582,6 +2583,7 @@
             if (!menu.classList.contains('hidden')) {
                 menu.classList.add('no-transition');
                 setTimeout(() => menu.classList.remove('no-transition'), 0);
+                wsSend({ type: 'get_management_proxy' });
             }
         }
 
@@ -2735,9 +2737,14 @@
         }
 
         function applyProxyStatus(payload) {
-            const enabled = payload && payload.configured && payload.label;
+            const source = (payload && payload.source) || '';
+            const enabled = source === '程序配置' || source === '系统环境变量';
             const statusEl = document.getElementById('proxyStatusText');
-            if (statusEl) statusEl.textContent = enabled ? `已启用: ${payload.label}` : '未启用（可用系统环境变量代理）';
+            if (statusEl) {
+                statusEl.textContent = enabled ? `已启用: ${payload.label}` : '未启用（可用系统环境变量代理）';
+            }
+            const sourceEl = document.getElementById('proxySourceText');
+            if (sourceEl) sourceEl.textContent = source ? `代理来源: ${source}` : '代理来源: 未设置';
             const hintEl = document.getElementById('uploadProxyHint');
             if (hintEl) {
                 hintEl.textContent = enabled
@@ -2951,11 +2958,13 @@
             const rawRelinkHost = String(c.relinkhost || '').trim();
             if (relinkOff) {
                 result.nsb.relinkPreset = 'off';
+                result.nsb.relinkHost = '已关闭';
             } else if (rawRelinkHost && rawRelinkHost !== 'probe.609909.xyz') {
                 result.nsb.relinkPreset = 'custom';
                 result.nsb.relinkHost = rawRelinkHost;
             } else {
-                result.nsb.relinkPreset = 'off';
+                result.nsb.relinkPreset = 'default';
+                result.nsb.relinkHost = rawRelinkHost || '已关闭';
             }
             return result;
         }
@@ -3895,7 +3904,10 @@
                 if (followAutoSpeed) return NSB_RELINK_DEFAULT_HOST;
                 return '';
             }
-            if (preset && preset.value === 'custom') return (input && input.value ? input.value : '').trim();
+            if (preset && preset.value === 'custom') {
+                const custom = (input && input.value ? input.value : '').trim();
+                return custom || NSB_RELINK_DEFAULT_HOST;
+            }
             return NSB_RELINK_DEFAULT_HOST;
         }
 
@@ -6283,9 +6295,11 @@
                 case 'speed_url_status':
                     applySpeedURLStatus(msg.data || {});
                     break;
-                case 'proxy_updated':
+                case 'proxy_status':
                     applyProxyStatus(msg.data || {});
-                    {
+                    break;
+                case 'proxy_updated':
+                    applyProxyStatus(msg.data || {});                    {
                         const input = document.getElementById('proxyInput');
                         if (input) input.value = '';
                     }

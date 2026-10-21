@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -137,6 +138,19 @@ func maskProxyURL(raw *url.URL) string {
 	return raw.Scheme + "://" + raw.Host
 }
 
+func proxySourceLabel() string {
+	if managementProxyConfigured() {
+		return "程序配置"
+	}
+	for _, key := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"} {
+		value := strings.TrimSpace(os.Getenv(key))
+		if value != "" {
+			return "系统环境变量"
+		}
+	}
+	return ""
+}
+
 func proxyStatusLabel() string {
 	if inUse := managementProxyInUse(); inUse != nil {
 		return maskProxyURL(inUse)
@@ -149,12 +163,22 @@ func applyManagementProxyFromConfigFile(path string) {
 	if err != nil {
 		return
 	}
+	if u := strings.TrimSpace(cfg.URL); u != "" {
+		speedURLConfigCandidates = append(speedURLConfigCandidates, u)
+	}
+	if u := strings.TrimSpace(cfg.NSBURL); u != "" {
+		speedURLConfigCandidates = append(speedURLConfigCandidates, u)
+	}
 	if err := setManagementProxy(cfg.Proxy); err != nil {
 		fmt.Printf("[proxy] 管理面代理配置无效，未启用: %v\n", err)
 	}
 }
 
+var proxyConfigWriteMutex sync.Mutex
+
 func updateProxyInConfigFile(path, raw string) error {
+	proxyConfigWriteMutex.Lock()
+	defer proxyConfigWriteMutex.Unlock()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

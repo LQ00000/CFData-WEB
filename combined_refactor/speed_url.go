@@ -220,6 +220,8 @@ func speedURLLabel(rawURL string) string {
 	}
 }
 
+var speedURLConfigCandidates []string
+
 func speedURLCandidates() []string {
 	candidates := []string{cloudflareSpeedURL, cmSpeedURL, mobileDedicatedSpeedURL}
 	custom := strings.TrimSpace(speedTestURL)
@@ -233,6 +235,21 @@ func speedURLCandidates() []string {
 		}
 		if !duplicate {
 			candidates = append(candidates, custom)
+		}
+	}
+	for _, extra := range speedURLConfigCandidates {
+		if extra == "" || isAutoSpeedURL(extra) {
+			continue
+		}
+		duplicate := extra == custom
+		for _, existing := range candidates {
+			if existing == extra {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			candidates = append(candidates, extra)
 		}
 	}
 	return candidates
@@ -319,7 +336,8 @@ func isSpeedURLAvailable(rawURL string) (available bool, known bool) {
 
 func firstAvailableSpeedURL(order ...string) string {
 	for _, candidate := range order {
-		if available, _ := isSpeedURLAvailable(candidate); available {
+		available, known := isSpeedURLAvailable(candidate)
+		if !known || available {
 			return candidate
 		}
 	}

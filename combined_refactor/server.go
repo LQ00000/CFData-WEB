@@ -95,7 +95,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		"geoCheckOK":       cfCountryOK,
 		"skipGeoCheck":     skipGeoCheck,
 		"speedURLStatus":   speedURLStatusPayload(),
-		"proxyStatus":      map[string]interface{}{"configured": managementProxyConfigured(), "label": proxyStatusLabel()},
+		"proxyStatus":      map[string]interface{}{"configured": managementProxyConfigured(), "source": proxySourceLabel()},
 	})
 	if backgroundSession := currentBackgroundTaskSession(); backgroundSession != nil {
 		session.sendWSMessage("background_task_found", backgroundSession.backgroundSummary())
@@ -314,8 +314,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			if params.SpeedLimit < 0 {
 				params.SpeedLimit = 0
 			}
-			if params.SpeedMin <= 0 {
-				params.SpeedMin = 0.1
+			if params.SpeedMin < 0 {
+				params.SpeedMin = 0
 			}
 			if strings.TrimSpace(params.SpeedURL) == "" {
 				params.SpeedURL = speedTestURL
@@ -437,6 +437,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		"get_speed_url_status": func(data json.RawMessage) {
 			session.sendWSMessage("speed_url_status", speedURLStatusPayload())
 		},
+		"get_management_proxy": func(data json.RawMessage) {
+			session.sendWSMessage("proxy_status", map[string]interface{}{"configured": managementProxyConfigured(), "label": proxyStatusLabel(), "source": proxySourceLabel()})
+		},
 		"set_management_proxy": func(data json.RawMessage) {
 			var params struct {
 				Value string `json:"value"`
@@ -450,7 +453,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				session.sendWSMessage("error", "代理设置无效: "+err.Error())
 				return
 			}
-			status := map[string]interface{}{"configured": managementProxyConfigured(), "label": proxyStatusLabel()}
+			status := map[string]interface{}{"configured": managementProxyConfigured(), "label": proxyStatusLabel(), "source": proxySourceLabel()}
 			saveErr := updateProxyInConfigFile(defaultCLIConfigPath(), managementProxyRaw)
 			if saveErr != nil {
 				status["saved"] = false
