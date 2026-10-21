@@ -292,7 +292,45 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 					fileName = params.SourceURL
 					fileContent = content
 				}
-				runNSBTask(ctx, session, fileName, fileContent, params.OutFile, params.MaxThreads, params.FallbackPort, params.SpeedTest, params.SpeedURL, params.EnableTLS, params.Delay, params.ResultLimit, params.DC, params.SpeedMin, params.SpeedLimit, params.Compact, scanMode)
+				runNSBTask(ctx, session, fileName, fileContent, params.OutFile, params.MaxThreads, params.FallbackPort, params.SpeedTest, params.SpeedURL, params.EnableTLS, params.Delay, params.ResultLimit, params.DC, params.SpeedMin, params.SpeedLimit, params.Compact, scanMode, params.RelinkHost)
+			})
+		},
+		"start_nsb_reallink": func(data json.RawMessage) {
+			var params startNSBReallinkRequest
+			if err := json.Unmarshal(data, &params); err != nil {
+				session.sendWSMessage("error", "start_nsb_reallink 参数解析失败")
+				return
+			}
+			params.RelinkHost = strings.TrimSpace(params.RelinkHost)
+			if params.RelinkHost == "" {
+				session.sendWSMessage("error", "链路复验未配置探针域名（relinkhost）")
+				return
+			}
+			if params.SpeedTest < 0 {
+				params.SpeedTest = 0
+			}
+			if params.SpeedLimit < 0 {
+				params.SpeedLimit = 0
+			}
+			if params.SpeedMin <= 0 {
+				params.SpeedMin = 0.1
+			}
+			if strings.TrimSpace(params.SpeedURL) == "" {
+				params.SpeedURL = speedTestURL
+			}
+			if strings.TrimSpace(params.OutFile) == "" {
+				params.OutFile = "ip.csv"
+			}
+			if len(params.Results) == 0 {
+				session.sendWSMessage("error", "没有可复验的非标结果")
+				return
+			}
+			scanMode := params.ScanMode
+			if scanMode == "" {
+				scanMode = scanModeTCPing
+			}
+			session.startTaskNamed("链路复验", "nsb", map[string]interface{}{"outFile": params.OutFile, "speedTest": params.SpeedTest, "speedLimit": params.SpeedLimit}, func(ctx context.Context, session *appSession) {
+				runNSBReallinkTask(ctx, session, params.Results, params.RelinkHost, params.SpeedTest, params.SpeedURL, params.EnableTLS, params.SpeedMin, params.SpeedLimit, params.Compact, scanMode, params.OutFile)
 			})
 		},
 		"start_nsb_speed_batch": func(data json.RawMessage) {

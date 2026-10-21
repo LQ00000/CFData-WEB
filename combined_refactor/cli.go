@@ -48,6 +48,8 @@ type cliConfig struct {
 	nsbDC           string
 	nsbSpeedMin     float64
 	nsbSpeedLimit   int
+	relink          bool
+	relinkHost      string
 	showProgress    bool
 	noColor         bool
 	compactIPv4     bool
@@ -109,6 +111,8 @@ type cliFileConfig struct {
 	SourceURL       string  `json:"nsbsourceurl"`
 	NSBFallbackPort int     `json:"nsbfallbackport"`
 	NSBDC           string  `json:"nsbdc"`
+	Relink          bool    `json:"relink"`
+	RelinkHost      string  `json:"relinkhost"`
 	OutIPType       string  `json:"outiptype"`
 	OutQualified    string  `json:"outqualified"`
 	TLS             bool    `json:"nsbtls"`
@@ -260,6 +264,8 @@ var (
 		{name: "nsbresultlimit", description: "非标模式延迟测试结果上限；必须为非 0 正整数", defaultValue: "1000"},
 		{name: "nsbspeedmin", description: "非标模式测速结果阈值，单位 MB/s", defaultValue: "0.1"},
 		{name: "nsbspeedlimit", description: "非标模式测速结果上限；0 表示关闭测速", defaultValue: "5"},
+		{name: "relink", description: "链路复验开关；开启后扫描完成时对结果做真实链路验证，不可用的候选将被剔除", defaultValue: "true"},
+		{name: "relinkhost", description: "链路复验探针域名；默认使用内置公共探针，配合 relink 开关使用", defaultValue: "probe.609909.xyz"},
 	}
 )
 
@@ -295,6 +301,8 @@ func registerCLIFlags() *cliConfig {
 	flag.BoolVar(&cfg.enableTLS, "nsbtls", true, "非标模式是否启用 TLS")
 	flag.BoolVar(&cfg.compactNSB, "nsbcompact", true, "非标模式导出精简表格列")
 	flag.IntVar(&cfg.resultLimit, "nsbresultlimit", 1000, "非标模式延迟测试结果上限；必须为非 0 正整数")
+	flag.BoolVar(&cfg.relink, "relink", true, "链路复验开关；开启后非标扫描完成时对结果做真实链路验证（TCP+TLS+HTTP 访问探针），不可用的候选将被剔除")
+	flag.StringVar(&cfg.relinkHost, "relinkhost", "probe.609909.xyz", "链路复验探针域名；默认使用内置公共探针，配合 -relink 开关使用")
 	flag.Float64Var(&cfg.nsbSpeedMin, "nsbspeedmin", 0.1, "非标模式测速结果阈值，单位 MB/s")
 	flag.IntVar(&cfg.nsbSpeedLimit, "nsbspeedlimit", 5, "非标模式测速结果上限；0 表示关闭测速")
 	flag.BoolVar(&cfg.showProgress, "progress", true, "CLI 模式输出进度日志")
@@ -502,7 +510,7 @@ func defaultCLIExportConfig() cliExportConfig {
 }
 
 func defaultCLIFileConfig() cliFileConfig {
-	return cliFileConfig{CLI: false, Mode: "official", ScanMode: "tcping", IPType: 4, Threads: 100, NSBThreads: 100, Out: "cfdata-results", SpeedTest: 0, Progress: true, NoColor: false, URL: autoSpeedURLValue, NSBURL: autoSpeedURLValue, DNS: defaultDNSServers, Debug: false, CompactIPv4: false, TestPort: 443, Delay: 500, NSBDelay: 0, DC: "", SpeedLimit: 5, SpeedMin: 0.1, File: "", SourceURL: "", NSBFallbackPort: 0, OutIPType: "all", OutQualified: "all", NSBDC: "", TLS: true, Compact: true, ResultLimit: 1000, NSBSpeedMin: 0.1, NSBSpeedLimit: 5, Format: "txt", Fields: "compact", Custom: "", V6Bracket: true, Separator: "-", OutStartRow: 1, OutEndRow: 20, GitHub: false, GHBranch: "main", GHPath: "", GHMessage: "update cfdata results", EdgeTunnel: false, ETMode: "overwrite"}
+	return cliFileConfig{CLI: false, Mode: "official", ScanMode: "tcping", IPType: 4, Threads: 100, NSBThreads: 100, Out: "cfdata-results", SpeedTest: 0, Progress: true, NoColor: false, URL: autoSpeedURLValue, NSBURL: autoSpeedURLValue, DNS: defaultDNSServers, Debug: false, CompactIPv4: false, TestPort: 443, Delay: 500, NSBDelay: 0, DC: "", SpeedLimit: 5, SpeedMin: 0.1, File: "", SourceURL: "", NSBFallbackPort: 0, OutIPType: "all", OutQualified: "all", NSBDC: "", Relink: true, RelinkHost: "probe.609909.xyz", TLS: true, Compact: true, ResultLimit: 1000, NSBSpeedMin: 0.1, NSBSpeedLimit: 5, Format: "txt", Fields: "compact", Custom: "", V6Bracket: true, Separator: "-", OutStartRow: 1, OutEndRow: 20, GitHub: false, GHBranch: "main", GHPath: "", GHMessage: "update cfdata results", EdgeTunnel: false, ETMode: "overwrite"}
 }
 
 func (c cliFileConfig) Export() cliExportConfig {
@@ -787,6 +795,8 @@ func buildCLIConfigHelp() []cliConfigHelp {
 		{Name: "nsbresultlimit", Description: "非标模式延迟测试结果上限；必须为非 0 正整数", Default: "1000"},
 		{Name: "nsbspeedmin", Description: "非标模式测速结果阈值，单位 MB/s", Default: "0.1"},
 		{Name: "nsbspeedlimit", Description: "非标模式测速结果上限；0 表示关闭测速", Default: "5"},
+		{Name: "relink", Description: "链路复验开关；开启后非标扫描完成时对结果做真实链路验证（TCP+TLS+HTTP 访问探针域），不可用的候选将被剔除", Default: "true", Options: []string{"true", "false"}},
+		{Name: "relinkhost", Description: "链路复验探针域名；默认使用内置公共探针，配合 relink 开关使用", Default: "probe.609909.xyz"},
 		{Name: "outformat", Description: "导出/上传内容格式", Default: "txt", Options: []string{"csv", "txt"}},
 		{Name: "outfields", Description: "导出字段；支持 compact、all、ipport 或逗号分隔字段 key；自定义字段可写在这里排序", Default: "compact", Options: []string{"compact", "all", "ipport", "ipport,dc,loc", "ipport,latency,dc,loc"}},
 		{Name: "outcustom", Description: "自定义导出字段，格式 标题:内容，多项用逗号分隔；未在 outfields 中排序时默认追加到最后。兼容 key=标题:内容", Default: ""},
@@ -903,6 +913,10 @@ func applyCLIFileConfig(cfg *cliConfig, fileCfg cliFileConfig, provided map[stri
 	setInt("nsbresultlimit", &cfg.resultLimit, fileCfg.ResultLimit)
 	setFloat("nsbspeedmin", &cfg.nsbSpeedMin, fileCfg.NSBSpeedMin)
 	setInt("nsbspeedlimit", &cfg.nsbSpeedLimit, fileCfg.NSBSpeedLimit)
+	if !provided["relink"] {
+		cfg.relink = fileCfg.Relink
+	}
+	setString("relinkhost", &cfg.relinkHost, fileCfg.RelinkHost)
 
 	genericURL := speedTestURL
 	if isNSBRun {
@@ -1251,7 +1265,12 @@ func runNSBCLI(cfg *cliConfig) error {
 		if scanMode == "" {
 			scanMode = scanModeTCPing
 		}
-		runNSBTask(ctx, session, inputName, content, cfg.outFile, cfg.threads, cfg.nsbFallbackPort, cfg.speedTest, speedTestURL, cfg.enableTLS, cfg.delay, cfg.resultLimit, cfg.nsbDC, cfg.nsbSpeedMin, cfg.nsbSpeedLimit, cfg.compactNSB, scanMode)
+		runNSBTask(ctx, session, inputName, content, cfg.outFile, cfg.threads, cfg.nsbFallbackPort, cfg.speedTest, speedTestURL, cfg.enableTLS, cfg.delay, cfg.resultLimit, cfg.nsbDC, cfg.nsbSpeedMin, cfg.nsbSpeedLimit, cfg.compactNSB, scanMode, func() string {
+			if !cfg.relink {
+				return ""
+			}
+			return cfg.relinkHost
+		}())
 	}); err != nil {
 		return cliTaskError(err)
 	}
@@ -1412,16 +1431,6 @@ func printCLIConfig(cfg *cliConfig) {
 	fmt.Println(colorize("----------------------------------------", ansiCyan))
 }
 
-func maskSecret(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return ""
-	}
-	if len(value) <= 8 {
-		return "********"
-	}
-	return value[:4] + "..." + value[len(value)-4:]
-}
-
 func printCLIUsage() {
 	printBanner()
 	fmt.Fprintf(flag.CommandLine.Output(), "%s\n", colorize("CFData 命令行帮助", ansiBold+ansiGreen))
@@ -1429,7 +1438,7 @@ func printCLIUsage() {
 	checkAndPrintUpdate("")
 	fmt.Fprintf(flag.CommandLine.Output(), "\n")
 	fmt.Fprintf(flag.CommandLine.Output(), "默认行为: 不带 -cli 时启动 Web 服务；-cli 进入交互菜单；-cli qs 按配置快速启动\n")
-	fmt.Fprintf(flag.CommandLine.Output(), "CLI 用法: ./cfdata-test -cli（菜单）或 -cli qs（快速启动）或 -cli -mode=official ...（直接执行）\n")
+	fmt.Fprintf(flag.CommandLine.Output(), "CLI 用法: 程序名 -cli（菜单）或 -cli qs（快速启动）或 -cli -mode=official ...（直接执行）\n")
 	fmt.Fprintf(flag.CommandLine.Output(), "\n")
 	printCLIUsageGroup("通用参数", cliCommonFlags)
 	printCLIUsageGroup("官方模式参数", cliOfficialFlags)
@@ -1661,7 +1670,7 @@ func writeCLIExportAndMaybeUpload(cfg *cliConfig, rows []cliResultRow, mode stri
 	}
 	filename := cfg.outFile
 	if strings.TrimSpace(filename) == "" {
-		filename = "ip." + cfg.export.Format
+		filename = "cfdata-results." + cfg.export.Format
 	}
 	if ext := "." + cfg.export.Format; !strings.HasSuffix(strings.ToLower(filename), ext) {
 		filename = strings.TrimSuffix(filename, filepath.Ext(filename)) + ext

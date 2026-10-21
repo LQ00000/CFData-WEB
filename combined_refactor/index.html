@@ -1880,6 +1880,22 @@
                     </div>
                 </div>
                 <div class="option-item full-width">
+                    <span class="label" title="扫描完成后对结果做真实链路验证（TCP+TLS+HTTP），不可用的候选将被剔除；默认关闭，开启自动测速时自动跟随执行">🔬 链路复验</span>
+                    <div class="field-with-action">
+                        <select id="nsbRelinkPreset" class="speed-url-select" onchange="applyRelinkPreset()">
+                            <option value="off" selected>关闭</option>
+                            <option value="default">公共探针</option>
+                            <option value="custom">手动输入</option>
+                        </select>
+                        <input id="nsbRelinkHost" type="text" value="已关闭" style="flex: 1 1 120px;"
+                            placeholder="输入自定义探针域名" oninput="markRelinkCustom()">
+                        <button class="mini-action-btn" title="链路复验：对当前结果执行真实链路验证（需二次确认）"
+                            onclick="startNSBReallink()">🔬</button>
+                        <button class="mini-action-btn" title="恢复公共探针"
+                            onclick="resetRelinkDefault()">↺</button>
+                    </div>
+                </div>
+                <div class="option-item full-width">
                     <span class="label">⬆ 自动上传</span>
                     <select id="nsbAutoUploadAccount"></select>
                 </div>
@@ -2361,6 +2377,7 @@
         let defaultSpeedTestUrl = "speed.okl.abrdns.com";
         let isTaskRunning = false;
         let isStoppingTask = false;
+        let nsbReallinkRunning = false;
         let scanData = [];
         let testData = [];
         let dcList = [];
@@ -2769,6 +2786,11 @@
             if (n.compactView) setValue('nsbCompactView', n.compactView);
             setValue('nsbOutFile', n.outFile);
             setValue('nsbSourceUrl', n.sourceUrl);
+            if (n.relinkPreset !== undefined) {
+                setValue('nsbRelinkPreset', n.relinkPreset);
+                if (n.relinkHost !== undefined) setValue('nsbRelinkHost', n.relinkHost);
+                syncRelinkControls();
+            }
             if (o.speedUrl) applySpeedUrlConfig('officialSpeedUrl', 'officialSpeedUrlPreset', o.speedUrl);
             if (n.speedUrl) applySpeedUrlConfig('nsbSpeedUrl', 'nsbSpeedUrlPreset', n.speedUrl);
             syncOfficialSpeedConfigState();
@@ -2844,6 +2866,16 @@
             if (compact !== undefined) result.nsb.compactView = compact === true || String(compact).toLowerCase() === 'true' || String(compact) === '1' ? 'compact' : 'full';
             result.nsb.outFile = pick(c, ['out', 'nsbout', 'offout']);
             result.nsb.sourceUrl = pick(c, ['nsbsourceurl', 'sourceurl']);
+            const relinkOff = c.relink === false || String(c.relink).toLowerCase() === 'false' || String(c.relink) === '0';
+            const rawRelinkHost = String(c.relinkhost || '').trim();
+            if (relinkOff) {
+                result.nsb.relinkPreset = 'off';
+            } else if (rawRelinkHost && rawRelinkHost !== 'probe.609909.xyz') {
+                result.nsb.relinkPreset = 'custom';
+                result.nsb.relinkHost = rawRelinkHost;
+            } else {
+                result.nsb.relinkPreset = 'off';
+            }
             return result;
         }
 
@@ -3633,6 +3665,7 @@
             officialAutoStage = '';
             officialBatchSpeedRunning = false;
             nsbBatchSpeedRunning = false;
+            nsbReallinkRunning = false;
             officialTestCompletePending = false;
             officialSpeedEndedByRateLimit = false;
             currentTestingDC = '';
@@ -3744,6 +3777,97 @@
                 speedURL: resolveSpeedTestUrl('nsbSpeedUrl', 'nsbSpeedUrlPreset'),
                 enableTLS: tlsMode !== 'off',
             };
+        }
+
+        const NSB_RELINK_DEFAULT_HOST = 'probe.609909.xyz';
+
+        function syncRelinkControls() {
+            const preset = document.getElementById('nsbRelinkPreset');
+            const input = document.getElementById('nsbRelinkHost');
+            if (!preset || !input) return;
+            if (preset.value === 'off') {
+                input.value = '已关闭';
+            } else if (preset.value === 'custom') {
+                if (!input.value.trim() || input.value === '已关闭' || input.value === '公共探针') input.value = '';
+            } else {
+                preset.value = 'default';
+                input.value = '公共探针';
+            }
+        }
+
+        function applyRelinkPreset() {
+            syncRelinkControls();
+        }
+
+        function markRelinkCustom() {
+            const preset = document.getElementById('nsbRelinkPreset');
+            const input = document.getElementById('nsbRelinkHost');
+            if (!preset || !input) return;
+            if (input.readOnly) input.readOnly = false;
+            preset.value = 'custom';
+        }
+
+        function resetRelinkDefault() {
+            const preset = document.getElementById('nsbRelinkPreset');
+            const input = document.getElementById('nsbRelinkHost');
+            if (input) {
+                input.value = '公共探针';
+                input.readOnly = false;
+            }
+            if (preset) preset.value = 'default';
+        }
+
+        function getNSBRelinkHost(followAutoSpeed = false) {
+            const preset = document.getElementById('nsbRelinkPreset');
+            const input = document.getElementById('nsbRelinkHost');
+            if (preset && preset.value === 'off') {
+                if (followAutoSpeed) return NSB_RELINK_DEFAULT_HOST;
+                return '';
+            }
+            if (preset && preset.value === 'custom') return (input && input.value ? input.value : '').trim();
+            return NSB_RELINK_DEFAULT_HOST;
+        }
+
+        function startNSBReallink() {
+            if (nsbReallinkRunning || isTaskRunning || nsbBatchSpeedRunning) return;
+            if (currentMode !== 'nsb') {
+                showNoticeCard('请切换到非标模式后再复验');
+                return;
+            }
+            const rows = getNSBSpeedTargetRows();
+            if (!rows.length) {
+                showNoticeCard('当前没有可复验的非标结果');
+                return;
+            }
+            const probeHost = getNSBRelinkHost() || NSB_RELINK_DEFAULT_HOST;
+            showConfirmCard(`确认开始链路复验？将对 ${rows.length} 个候选进行真实链路验证（TCP+TLS+HTTP），不可用的候选将从结果中剔除。`, () => {
+                const speedCfg = syncNSBSpeedConfigState();
+                const outFile = document.getElementById('nsbOutFile')?.value.trim() || 'ip.csv';
+                nsbReallinkRunning = true;
+                isTaskRunning = true;
+                isStoppingTask = false;
+                runningTaskLabel = '链路复验';
+                runningTaskMode = 'nsb';
+                setStartLoading('链路复验中...');
+                updateNSBSpeedButtons();
+                if (!wsSend({ type: 'start_nsb_reallink', data: {
+                    results: rows,
+                    relinkHost: probeHost,
+                    outFile,
+                    speedTest: speedCfg.speedTest,
+                    speedURL: speedCfg.speedURL,
+                    enableTLS: speedCfg.enableTLS,
+                    speedMin: speedCfg.speedMin,
+                    speedLimit: speedCfg.speedLimit,
+                    compact: nsbCompactView,
+                    scanMode: getScanMode(),
+                } })) {
+                    nsbReallinkRunning = false;
+                    isTaskRunning = false;
+                    finishRunningTask('✨ 开始扫描与测试');
+                    showNoticeCard('连接未就绪，请等待重连后再试');
+                }
+            }, '确认链路复验');
         }
 
         function setNSBCompactView(enabled) {
@@ -4783,6 +4907,7 @@
                     speedLimit,
                     compact,
                     scanMode: getScanMode(),
+                    relinkHost: getNSBRelinkHost(speedTest > 0),
                 }
             })) {
                 finishRunningTask('✨ 开始扫描与测试');
@@ -6166,6 +6291,7 @@
                 case 'nsb_csv_complete':
                     const wasStoppingNSB = isStoppingTask;
                     finishRunningTask('✨ 开始扫描与测试');
+                    nsbReallinkRunning = false;
                     nsbStopHandledByComplete = wasStoppingNSB;
                     nsbHeaders = msg.data.headers || [];
                     nsbRows = msg.data.rows || [];

@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	requestURL       = "speed.cloudflare.com/cdn-cgi/trace"
-	scanModeTCPing   = "tcping"
-	scanModeHTTPing  = "httping"
+	requestURL      = "speed.cloudflare.com/cdn-cgi/trace"
+	scanModeTCPing  = "tcping"
+	scanModeHTTPing = "httping"
 )
 
 func latencyMultiplier(scanMode string, isTLS bool) float64 {

@@ -158,6 +158,8 @@ CLI 可通过 `-offurl`/`-nsburl` 指定：
 -nsbresultlimit   非标延迟测试结果上限
 -nsbspeedmin      非标测速合格阈值，单位 MB/s
 -nsbspeedlimit    非标测速合格结果上限
+-relink           链路复验开关（默认开启）；扫描完成时对结果做真实链路验证，不可用的候选将被剔除
+-relinkhost       链路复验探针域名；默认使用内置公共探针，配合 -relink 开关使用
 ```
 
 完整参数可运行：

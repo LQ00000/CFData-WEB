@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -639,7 +642,7 @@ done:
 	return float64(written) / duration.Seconds() / 1024, ""
 }
 
-func runNSBTask(ctx context.Context, session *appSession, fileName, fileContent, outFile string, maxThreads, fallbackPort, speedTest int, speedURL string, enableTLS bool, delay int, resultLimit int, targetDC string, speedMin float64, speedLimit int, compact bool, scanMode string) {
+func runNSBTask(ctx context.Context, session *appSession, fileName, fileContent, outFile string, maxThreads, fallbackPort, speedTest int, speedURL string, enableTLS bool, delay int, resultLimit int, targetDC string, speedMin float64, speedLimit int, compact bool, scanMode string, reallinkHost string) {
 	session.sendWSMessage("log", fmt.Sprintf("开始非标优选：%s", fileName))
 
 	tmpFile, err := os.CreateTemp(".", "cfdata-nsb-*.txt")
@@ -809,6 +812,21 @@ func runNSBTask(ctx context.Context, session *appSession, fileName, fileContent,
 	}
 	session.sendWSMessage("nsb_scan_sorted", sortedScanRows)
 
+	reallinkHost = strings.TrimSpace(reallinkHost)
+	if reallinkHost != "" && !wasCanceled && ctx.Err() == nil {
+		kept, _, _ := runNSBReallinkFilter(ctx, session, nsbResults, reallinkHost)
+		nsbResults = kept
+		if len(nsbResults) == 0 {
+			session.sendWSMessage("error", "链路复验后未发现可用 IP")
+			return
+		}
+		sortedScanRows = make([]nsbScanMessage, 0, len(nsbResults))
+		for i := range nsbResults {
+			sortedScanRows = append(sortedScanRows, nsbResults[i].toNSBLiveMessage("", compact))
+		}
+		session.sendWSMessage("nsb_scan_sorted", sortedScanRows)
+	}
+
 	completionStatus := "complete"
 	completionMessage := "测试完成"
 	qualifiedCount := 0
@@ -882,6 +900,209 @@ func runNSBTask(ctx context.Context, session *appSession, fileName, fileContent,
 
 	session.sendWSMessage("nsb_csv_complete", nsbCSVCompletePayload{Headers: headers, Rows: rows, File: outFile, Status: completionStatus, Message: completionMessage, QualifiedCount: qualifiedCount})
 	session.sendWSMessage("log", fmt.Sprintf("非标优选完成，结果文件: %s", outFile))
+}
+
+// checkReallinkCandidate 对单个候选做真实链路验证：TCP 连接 → TLS 握手（SNI=探针域，不验证书，
+// 与参考实现行为一致）→ 真实 HTTP GET → 判定响应为探针 JSON 且包含有效出口 IP。
+// 返回 (是否可用, 失败原因, 失败明细)。
+func checkReallinkCandidate(ctx context.Context, ipAddr string, port int, probeHost string) (bool, string, string) {
+	conn, err := dialContextWithTimeout(ctx, "tcp", net.JoinHostPort(ipAddr, strconv.Itoa(port)), timeout)
+	if err != nil {
+		return false, "tcp_connect_failed", err.Error()
+	}
+	defer conn.Close()
+
+	tlsConn := tls.Client(conn, &tls.Config{ServerName: probeHost, InsecureSkipVerify: true})
+	if err := tlsConn.SetDeadline(time.Now().Add(maxDuration)); err != nil {
+		return false, "tls_setup_failed", err.Error()
+	}
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		return false, "tls_handshake_failed", err.Error()
+	}
+
+	request := "GET / HTTP/1.1\r\nHost: " + probeHost + "\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+	if _, err := tlsConn.Write([]byte(request)); err != nil {
+		return false, "http_write_failed", err.Error()
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(tlsConn), nil)
+	if err != nil {
+		return false, "http_read_failed", err.Error()
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil && len(body) == 0 {
+		return false, "http_read_failed", err.Error()
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return false, "http_bad_status", fmt.Sprintf("status=%d, body=%s", resp.StatusCode, sanitizeErrorText(string(body), 120))
+	}
+	var payload struct {
+		Probe  string `json:"probe"`
+		IP     string `json:"ip"`
+		IPType string `json:"ipType"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false, "invalid_response", fmt.Sprintf("status=%d, body=%s", resp.StatusCode, sanitizeErrorText(string(body), 120))
+	}
+	if net.ParseIP(strings.TrimSpace(payload.IP)) == nil {
+		return false, "invalid_response", "探针响应缺少有效出口 IP"
+	}
+	return true, "", ""
+}
+
+// runNSBReallinkFilter 对候选结果做链路复验并剔除不可用项。
+// 复验被终止时保留全部结果（与任务取消时的整理语义一致）。
+func runNSBReallinkFilter(ctx context.Context, session *appSession, results []iptestResult, probeHost string) ([]iptestResult, int, int) {
+	total := len(results)
+	session.sendWSMessage("log", fmt.Sprintf("开始链路复验：%d 条记录，探针=%s，并发=10", total, probeHost))
+	reportNSBProgress(session, "reallink", 0, total, "链路复验中")
+
+	keep := make([]bool, total)
+	reasonCounts := map[string]int{}
+	countMutex := sync.Mutex{}
+	var failures []nsbFailureRecord
+	var failMutex sync.Mutex
+
+	wasCanceled := runBoundedWorkers(ctx, total, 10, 10, func(current, total int) {
+		reportNSBProgress(session, "reallink", min(current, total), total, "链路复验中")
+	}, func(idx int) {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		res := &results[idx]
+		ok, reason, detail := checkReallinkCandidate(ctx, res.ipAddr, res.port, probeHost)
+		countMutex.Lock()
+		if ok {
+			keep[idx] = true
+		} else {
+			reasonCounts[reason]++
+		}
+		countMutex.Unlock()
+		if debugMode && !ok {
+			failMutex.Lock()
+			failures = append(failures, nsbFailureRecord{index: idx, ipAddr: res.ipAddr, port: strconv.Itoa(res.port), phase: "reallink", reason: reason, detail: detail})
+			failMutex.Unlock()
+		}
+	})
+
+	if wasCanceled || ctx.Err() != nil {
+		session.sendWSMessage("log", "链路复验已终止，保留当前全部结果")
+		return results, total, 0
+	}
+
+	kept := make([]iptestResult, 0, total)
+	for i := range results {
+		if keep[i] {
+			kept = append(kept, results[i])
+		}
+	}
+	removed := total - len(kept)
+	session.sendWSMessage("log", fmt.Sprintf("链路复验完成：可用 %d / 不可用 %d", len(kept), removed))
+	if removed > 0 {
+		session.sendWSMessage("log", formatFailureSummary("链路复验剔除", reasonCounts, map[string]string{}))
+	}
+	if debugMode {
+		for _, failure := range sortedNSBFailures(failures) {
+			recordAllDebugError("reallink_failure", fmt.Sprintf("ip=%s port=%s phase=%s reason=%s detail=%s", failure.ipAddr, failure.port, failure.phase, failure.reason, failure.detail))
+		}
+	}
+	return kept, len(kept), removed
+}
+
+// runNSBReallinkTask Web 端手动链路复验任务：复验剔除 → 测速（若开启）→ 导出 CSV。
+func runNSBReallinkTask(ctx context.Context, session *appSession, rows []nsbScanMessage, reallinkHost string, speedTest int, speedURL string, enableTLS bool, speedMin float64, speedLimit int, compact bool, scanMode string, outFile string) {
+	reallinkHost = strings.TrimSpace(reallinkHost)
+	if reallinkHost == "" {
+		session.sendWSMessage("error", "链路复验未配置探针域名（relinkhost）")
+		return
+	}
+	results := make([]iptestResult, 0, len(rows))
+	for _, row := range rows {
+		if res, ok := nsbMessageToResult(row); ok {
+			results = append(results, res)
+		}
+	}
+	if len(results) == 0 {
+		session.sendWSMessage("error", "没有可复验的非标结果")
+		return
+	}
+
+	kept, _, _ := runNSBReallinkFilter(ctx, session, results, reallinkHost)
+	wasCanceled := ctx.Err() != nil
+	if !wasCanceled {
+		results = kept
+		if len(results) == 0 {
+			session.sendWSMessage("error", "链路复验后未发现可用 IP")
+			return
+		}
+	}
+	sortedRows := make([]nsbScanMessage, 0, len(results))
+	for i := range results {
+		sortedRows = append(sortedRows, results[i].toNSBLiveMessage("", compact))
+	}
+	session.sendWSMessage("nsb_scan_sorted", sortedRows)
+
+	completionStatus := "complete"
+	completionMessage := "测试完成"
+	qualifiedCount := 0
+	if wasCanceled {
+		completionStatus = "partial"
+		completionMessage = "任务已手动终止，已整理当前可用结果"
+	} else if speedTest > 0 && speedLimit > 0 {
+		session.sendWSMessage("log", fmt.Sprintf("开始测速：%d 条记录，线程数=%d，目标上限=%d，测速阈值=%.2fMB/s", len(results), speedTest, speedLimit, speedMin))
+		reportNSBProgress(session, "speed", 0, speedLimit, "测速中")
+		speedCanceled := runNSBSpeedWorkers(ctx, results, speedTest, speedLimit, speedMin, func(tested, qualified int) {
+			reportNSBProgress(session, "speed", min(qualified, speedLimit), speedLimit, "测速中")
+		}, func(idx int, speedErr string) {
+			res := &results[idx]
+			session.sendWSMessage("nsb_scan_result", res.toNSBLiveMessage(res.speedText, compact))
+		}, func(idx int) (float64, string) {
+			res := &results[idx]
+			return runNSBDownloadSpeed(ctx, res.ipAddr, res.port, enableTLS, speedURL)
+		})
+		if speedCanceled || ctx.Err() != nil {
+			wasCanceled = true
+		}
+		for i := range results {
+			if results[i].speedTested && results[i].speedText == "" {
+				results[i].speedText = fmt.Sprintf("%.2fMB/s", results[i].downloadSpeed/1024)
+			}
+			if results[i].speedTested && results[i].downloadSpeed/1024 >= speedMin {
+				results[i].speedQualified = true
+				qualifiedCount++
+			}
+		}
+		sortNSBResults(results, speedTest)
+		if wasCanceled {
+			completionStatus = "partial"
+			completionMessage = "任务已手动终止，已整理当前可用结果"
+		} else if qualifiedCount == 0 {
+			completionStatus = "failed"
+			completionMessage = "未找到符合要求的结果"
+		} else if speedLimit > 0 && qualifiedCount < speedLimit {
+			completionStatus = "partial"
+			completionMessage = "测试完成，未能完成任务需求结果"
+		}
+		sortedRows = make([]nsbScanMessage, 0, len(results))
+		for i := range results {
+			sortedRows = append(sortedRows, results[i].toNSBLiveMessage(results[i].speedText, compact))
+		}
+		session.sendWSMessage("nsb_scan_sorted", sortedRows)
+	}
+
+	if err := writeNSBCSV(outFile, results, speedTest, compact, scanMode); err != nil {
+		session.sendWSMessage("error", "导出 CSV 失败: "+err.Error())
+		return
+	}
+	if wasCanceled {
+		session.sendWSMessage("nsb_csv_ready", map[string]interface{}{"file": outFile, "status": completionStatus, "message": completionMessage, "rows": len(results), "qualifiedCount": qualifiedCount})
+	}
+	headers := nsbCSVHeaders(compact, scanMode)
+	csvRows := nsbCSVRows(results, speedTest > 0, compact, scanMode)
+	session.sendWSMessage("nsb_csv_complete", nsbCSVCompletePayload{Headers: headers, Rows: csvRows, File: outFile, Status: completionStatus, Message: completionMessage, QualifiedCount: qualifiedCount})
+	session.sendWSMessage("log", fmt.Sprintf("链路复验完成，结果文件: %s", outFile))
 }
 
 func runNSBSpeedBatch(ctx context.Context, session *appSession, rows []nsbScanMessage, maxWorkers int, speedURL string, enableTLS bool, speedMin float64, speedLimit int, skipTested bool, compact bool) {
@@ -976,28 +1197,28 @@ func nsbMessageToResult(row nsbScanMessage) (iptestResult, bool) {
 		return iptestResult{}, false
 	}
 	return iptestResult{
-		ipAddr:       strings.TrimSpace(row.IP),
-		port:         port,
-		dataCenter:   row.DC,
-		locCode:      row.Loc,
-		region:       row.Region,
-		city:         row.City,
-		latency:      row.Latency,
-		lossRate:     parsePercent(row.LossRate),
-		outboundIP:   row.OutboundIP,
-		ipType:       row.IPType,
-		asnNumber:    row.ASNNumber,
-		asnOrg:       row.ASNOrg,
-		visitScheme:  firstNonEmpty(row.VisitScheme, mapBoolTLS(row.TLS)),
-		tlsVersion:   row.TLSVersion,
-		sni:          row.SNI,
-		httpVersion:  row.HTTPVersion,
-		warp:         row.Warp,
-		gateway:      row.Gateway,
-		rbi:          row.RBI,
-		kex:          row.Kex,
-		timestamp:    row.Timestamp,
-		speedText:    row.Speed,
+		ipAddr:        strings.TrimSpace(row.IP),
+		port:          port,
+		dataCenter:    row.DC,
+		locCode:       row.Loc,
+		region:        row.Region,
+		city:          row.City,
+		latency:       row.Latency,
+		lossRate:      parsePercent(row.LossRate),
+		outboundIP:    row.OutboundIP,
+		ipType:        row.IPType,
+		asnNumber:     row.ASNNumber,
+		asnOrg:        row.ASNOrg,
+		visitScheme:   firstNonEmpty(row.VisitScheme, mapBoolTLS(row.TLS)),
+		tlsVersion:    row.TLSVersion,
+		sni:           row.SNI,
+		httpVersion:   row.HTTPVersion,
+		warp:          row.Warp,
+		gateway:       row.Gateway,
+		rbi:           row.RBI,
+		kex:           row.Kex,
+		timestamp:     row.Timestamp,
+		speedText:     row.Speed,
 		originalInput: row.OriginalInput,
 	}, true
 }
