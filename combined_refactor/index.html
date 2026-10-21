@@ -3935,6 +3935,8 @@
                 runningTaskLabel = '链路复验';
                 runningTaskMode = 'nsb';
                 setStartLoading('链路复验中...');
+                resetProgress();
+                progressBox.style.display = 'block';
                 updateNSBSpeedButtons();
                 if (!wsSend({ type: 'start_nsb_reallink', data: {
                     results: rows,
