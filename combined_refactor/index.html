@@ -6462,6 +6462,7 @@
                             updateQualifiedSpeedProgress(p.current || 0, p.total || 1);
                         } else {
                             updateProgress(p.current || 0, p.total || 1, `${txt}`);
+                            if (p.phase === 'reallink') progressBar.style.animation = 'none';
                         }
                     }
                     break;
