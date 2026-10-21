@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -933,6 +934,9 @@ func checkReallinkCandidate(ctx context.Context, ipAddr string, port int, probeH
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return false, "http_bad_status", fmt.Sprintf("status=%d, body=%s", resp.StatusCode, sanitizeErrorText(string(body), 120))
 	}
+	if len(body) >= 64*1024 {
+		return false, "invalid_response", fmt.Sprintf("status=%d, 响应体超过截断阈值，疑似非探针服务", resp.StatusCode)
+	}
 	var payload struct {
 		Probe  string `json:"probe"`
 		IP     string `json:"ip"`
@@ -940,6 +944,9 @@ func checkReallinkCandidate(ctx context.Context, ipAddr string, port int, probeH
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return false, "invalid_response", fmt.Sprintf("status=%d, body=%s", resp.StatusCode, sanitizeErrorText(string(body), 120))
+	}
+	if !strings.Contains(strings.TrimSpace(payload.Probe), "cfdata") {
+		return false, "invalid_response", "探针响应缺少目标标记"
 	}
 	if net.ParseIP(strings.TrimSpace(payload.IP)) == nil {
 		return false, "invalid_response", "探针响应缺少有效出口 IP"
@@ -961,6 +968,14 @@ func runNSBReallinkFilter(ctx context.Context, session *appSession, results []ip
 	wasCanceled := runBoundedWorkers(ctx, total, 10, 10, func(current, total int) {
 		reportNSBProgress(session, "reallink", min(current, total), total, "链路复验中")
 	}, func(idx int) {
+		defer func() {
+			if r := recover(); r != nil {
+				countMutex.Lock()
+				reasonCounts["worker_panic"]++
+				countMutex.Unlock()
+				fmt.Printf("reallink worker panic (idx=%d): %v\n%s\n", idx, r, debug.Stack())
+			}
+		}()
 		select {
 		case <-ctx.Done():
 			return

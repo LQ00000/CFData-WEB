@@ -56,6 +56,9 @@ func setManagementProxy(raw string) error {
 	}
 	managementProxyRaw = strings.TrimSpace(raw)
 	managementProxyURL = parsed
+	managementHTTPClientCache.Lock()
+	managementHTTPClientCache.client = nil
+	managementHTTPClientCache.Unlock()
 	return nil
 }
 
@@ -96,6 +99,7 @@ func applyManagementProxy(transport *http.Transport) *http.Transport {
 		}
 		dialer, err := proxy.SOCKS5("tcp", managementProxyURL.Host, auth, proxy.Direct)
 		if err != nil {
+			fmt.Printf("[proxy] socks5 拨号器构建失败，该请求保持直连: %v\n", err)
 			return transport
 		}
 		transport.Proxy = nil
@@ -114,7 +118,24 @@ func applyManagementProxy(transport *http.Transport) *http.Transport {
 	return transport
 }
 
+var managementHTTPClientCache struct {
+	sync.RWMutex
+	client *http.Client
+}
+
 func managementHTTPClient(timeout time.Duration) *http.Client {
+	managementHTTPClientCache.RLock()
+	client := managementHTTPClientCache.client
+	managementHTTPClientCache.RUnlock()
+	if client != nil {
+		if timeout > 0 {
+			copied := *client
+			copied.Timeout = timeout
+			return &copied
+		}
+		return client
+	}
+
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = dialContext
 	transport.TLSClientConfig = tlsConfigWithRootCAs("")
@@ -123,9 +144,14 @@ func managementHTTPClient(timeout time.Duration) *http.Client {
 	if managementProxyConfigured() {
 		name = "upstream-proxy"
 	}
-	client := &http.Client{Transport: wrapDebugTransport(name, transport), Timeout: upstreamHTTPClient.Timeout}
+	client = &http.Client{Transport: wrapDebugTransport(name, transport), Timeout: upstreamHTTPClient.Timeout}
+	managementHTTPClientCache.Lock()
+	managementHTTPClientCache.client = client
+	managementHTTPClientCache.Unlock()
 	if timeout > 0 {
-		client.Timeout = timeout
+		copied := *client
+		copied.Timeout = timeout
+		return &copied
 	}
 	return client
 }
@@ -211,5 +237,6 @@ func updateProxyInConfigFile(path, raw string) error {
 	if err := os.WriteFile(path, out, 0600); err != nil {
 		return err
 	}
-	return os.WriteFile(path+".bak", data, 0600)
+	os.WriteFile(path+".bak", data, 0600)
+	return nil
 }

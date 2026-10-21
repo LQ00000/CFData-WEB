@@ -340,6 +340,13 @@ func runCLI(cfg *cliConfig) error {
 			return err
 		}
 	}
+	if cfg.compactIPv4 {
+		return runCompactIPv4CLI(cfg)
+	}
+	if strings.TrimSpace(cfg.export.GHUpload) != "" {
+		return runCLIQuickGitHubUpload(cfg)
+	}
+
 	applyCLISpeedDefault()
 	printCLIConfig(cfg)
 
@@ -352,13 +359,6 @@ func runCLI(cfg *cliConfig) error {
 		}
 	} else {
 		fmt.Println("[proxy-check] 已跳过地区/代理环境验证")
-	}
-
-	if cfg.compactIPv4 {
-		return runCompactIPv4CLI(cfg)
-	}
-	if strings.TrimSpace(cfg.export.GHUpload) != "" {
-		return runCLIQuickGitHubUpload(cfg)
 	}
 
 	mode := strings.ToLower(strings.TrimSpace(cfg.mode))

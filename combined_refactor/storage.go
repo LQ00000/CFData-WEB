@@ -139,7 +139,7 @@ func resetAllConfigFiles(session *appSession) {
 
 func getIPListContent(filename, apiURL string) (string, error) {
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
-		content, err := getURLContent(apiURL)
+		content, err := getURLContentViaProxy(context.Background(), apiURL)
 		if err != nil {
 			return "", err
 		}

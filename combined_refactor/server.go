@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -471,7 +470,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			session.sendWSMessage("proxy_updated", status)
 		},
 		"get_config": func(data json.RawMessage) {
-			cfgPath := filepath.Join(filepath.Dir(os.Args[0]), "cfdata-config.json")
+			cfgPath := defaultCLIConfigPath()
 			raw, err := os.ReadFile(cfgPath)
 			if err != nil {
 				session.sendWSMessage("error", "读取配置文件失败: "+err.Error())

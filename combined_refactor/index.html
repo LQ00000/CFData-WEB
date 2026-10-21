@@ -3912,7 +3912,10 @@
         }
 
         function startNSBReallink() {
-            if (nsbReallinkRunning || isTaskRunning || nsbBatchSpeedRunning) return;
+            if (nsbReallinkRunning || isTaskRunning || nsbBatchSpeedRunning) {
+                showNoticeCard('当前有任务正在运行，请等待完成后再复验');
+                return;
+            }
             if (currentMode !== 'nsb') {
                 showNoticeCard('请切换到非标模式后再复验');
                 return;
@@ -4409,7 +4412,7 @@
             const normalized = (headers || []).map(normalizeNSBHeader);
             const latencyIndex = normalized.indexOf('网络延迟');
             const lossIndex = normalized.indexOf('丢包率');
-            if (latencyIndex < 0 && lossIndex < 0) return [];
+            if (latencyIndex < 0 && lossIndex < 0) return rows || [];
             return (rows || []).filter((row) => {
                 const latencyMs = latencyIndex >= 0 ? parseFilterNumber(row[latencyIndex]) : NaN;
                 const lossPct = lossIndex >= 0 ? parseFilterNumber(row[lossIndex]) : NaN;
@@ -5146,6 +5149,7 @@
             let lossFilter = parseFloat(document.getElementById('sortFilterLoss')?.value);
             if (!Number.isFinite(lossFilter)) lossFilter = 100;
             lossFilter = Math.min(100, Math.max(0, lossFilter));
+            if (lossFilter <= 0) lossFilter = 0.01;
             const qualifiedSelect = document.getElementById('sortFilterQualified');
             if (sortModalMode === 'nsb') {
                 nsbTableIPTypeFilter = normalizeIPTypeFilter(document.getElementById('sortFilterIPType')?.value || 'all');
@@ -6299,9 +6303,9 @@
                     applyProxyStatus(msg.data || {});
                     break;
                 case 'proxy_updated':
-                    applyProxyStatus(msg.data || {});                    {
+                    applyProxyStatus(msg.data || {}); {
                         const input = document.getElementById('proxyInput');
-                        if (input) input.value = '';
+                        if (input && (msg.data?.saved !== false)) input.value = '';
                     }
                     showNoticeCard((msg.data && msg.data.message) || '代理设置已保存并生效');
                     break;
