@@ -6592,6 +6592,7 @@
                 updateBatchSpeedButton();
                 updateNSBSpeedButtons();
                 log('错误: ' + msg.data);
+                showNoticeCard(String(msg.data || '服务端返回错误'));
                 break;
             }
                     if (String(msg.data || '').includes('上传 GitHub')) {
