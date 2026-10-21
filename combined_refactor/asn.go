@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -54,7 +55,7 @@ func getASNReader() (*maxminddb.Reader, error) {
 	asnLookupState.loaded = true
 	if _, err := os.Stat(asnDBFile); os.IsNotExist(err) {
 		sendLog("本地 GeoLite2-ASN.mmdb 不存在，正在下载...")
-		content, err := getURLBytes(asnDBURL)
+		content, err := getURLBytesViaProxy(context.Background(), asnDBURL)
 		if err != nil {
 			asnLookupState.err = err
 			sendLog("下载 ASN 数据库失败: " + err.Error())

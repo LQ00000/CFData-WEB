@@ -48,6 +48,8 @@ type cliConfig struct {
 	nsbDC           string
 	nsbSpeedMin     float64
 	nsbSpeedLimit   int
+	relink          bool
+	relinkHost      string
 	showProgress    bool
 	noColor         bool
 	compactIPv4     bool
@@ -109,6 +111,9 @@ type cliFileConfig struct {
 	SourceURL       string  `json:"nsbsourceurl"`
 	NSBFallbackPort int     `json:"nsbfallbackport"`
 	NSBDC           string  `json:"nsbdc"`
+	Relink          bool    `json:"relink"`
+	RelinkHost      string  `json:"relinkhost"`
+	Proxy           string  `json:"proxy"`
 	OutIPType       string  `json:"outiptype"`
 	OutQualified    string  `json:"outqualified"`
 	TLS             bool    `json:"nsbtls"`
@@ -260,10 +265,15 @@ var (
 		{name: "nsbresultlimit", description: "非标模式延迟测试结果上限；必须为非 0 正整数", defaultValue: "1000"},
 		{name: "nsbspeedmin", description: "非标模式测速结果阈值，单位 MB/s", defaultValue: "0.1"},
 		{name: "nsbspeedlimit", description: "非标模式测速结果上限；0 表示关闭测速", defaultValue: "5"},
+		{name: "relink", description: "链路复验开关；开启后扫描完成时对结果做真实链路验证，不可用的候选将被剔除", defaultValue: "true"},
+		{name: "relinkhost", description: "链路复验探针域名；默认使用内置公共探针，配合 relink 开关使用", defaultValue: "probe.609909.xyz"},
+		{name: "proxy", description: "管理面代理；下载 ASN 库/locations、版本检查上传 GitHub/订阅等走此代理，扫描测速不受影响。支持 socks5://、socks5h://、http://、https://，留空使用系统环境变量代理", defaultValue: ""},
 	}
 )
 
 var errCLIConfigCreated = errors.New("CLI 配置文件已生成")
+
+var proxyFlag = ""
 
 func registerCLIFlags() *cliConfig {
 	cfg := &cliConfig{}
@@ -295,6 +305,9 @@ func registerCLIFlags() *cliConfig {
 	flag.BoolVar(&cfg.enableTLS, "nsbtls", true, "非标模式是否启用 TLS")
 	flag.BoolVar(&cfg.compactNSB, "nsbcompact", true, "非标模式导出精简表格列")
 	flag.IntVar(&cfg.resultLimit, "nsbresultlimit", 1000, "非标模式延迟测试结果上限；必须为非 0 正整数")
+	flag.BoolVar(&cfg.relink, "relink", true, "链路复验开关；开启后非标扫描完成时对结果做真实链路验证（TCP+TLS+HTTP 访问探针），不可用的候选将被剔除")
+	flag.StringVar(&cfg.relinkHost, "relinkhost", "probe.609909.xyz", "链路复验探针域名；默认使用内置公共探针，配合 -relink 开关使用")
+	flag.StringVar(&proxyFlag, "proxy", "", "管理面代理地址，支持 socks5://、socks5h://、http://、https://；下载/版本检查/上传走此代理，扫描测速不受影响；留空走系统环境变量代理")
 	flag.Float64Var(&cfg.nsbSpeedMin, "nsbspeedmin", 0.1, "非标模式测速结果阈值，单位 MB/s")
 	flag.IntVar(&cfg.nsbSpeedLimit, "nsbspeedlimit", 5, "非标模式测速结果上限；0 表示关闭测速")
 	flag.BoolVar(&cfg.showProgress, "progress", true, "CLI 模式输出进度日志")
@@ -327,6 +340,13 @@ func runCLI(cfg *cliConfig) error {
 			return err
 		}
 	}
+	if cfg.compactIPv4 {
+		return runCompactIPv4CLI(cfg)
+	}
+	if strings.TrimSpace(cfg.export.GHUpload) != "" {
+		return runCLIQuickGitHubUpload(cfg)
+	}
+
 	applyCLISpeedDefault()
 	printCLIConfig(cfg)
 
@@ -341,13 +361,6 @@ func runCLI(cfg *cliConfig) error {
 		fmt.Println("[proxy-check] 已跳过地区/代理环境验证")
 	}
 
-	if cfg.compactIPv4 {
-		return runCompactIPv4CLI(cfg)
-	}
-	if strings.TrimSpace(cfg.export.GHUpload) != "" {
-		return runCLIQuickGitHubUpload(cfg)
-	}
-
 	mode := strings.ToLower(strings.TrimSpace(cfg.mode))
 	switch mode {
 	case "official":
@@ -360,6 +373,8 @@ func runCLI(cfg *cliConfig) error {
 }
 
 func applyCLISpeedDefault() {
+	ensureSpeedURLAvailability()
+	logSpeedURLAvailabilitySummary()
 	if !isAutoSpeedURL(speedTestURL) {
 		return
 	}
@@ -502,7 +517,7 @@ func defaultCLIExportConfig() cliExportConfig {
 }
 
 func defaultCLIFileConfig() cliFileConfig {
-	return cliFileConfig{CLI: false, Mode: "official", ScanMode: "tcping", IPType: 4, Threads: 100, NSBThreads: 100, Out: "cfdata-results", SpeedTest: 0, Progress: true, NoColor: false, URL: autoSpeedURLValue, NSBURL: autoSpeedURLValue, DNS: defaultDNSServers, Debug: false, CompactIPv4: false, TestPort: 443, Delay: 500, NSBDelay: 0, DC: "", SpeedLimit: 5, SpeedMin: 0.1, File: "", SourceURL: "", NSBFallbackPort: 0, OutIPType: "all", OutQualified: "all", NSBDC: "", TLS: true, Compact: true, ResultLimit: 1000, NSBSpeedMin: 0.1, NSBSpeedLimit: 5, Format: "txt", Fields: "compact", Custom: "", V6Bracket: true, Separator: "-", OutStartRow: 1, OutEndRow: 20, GitHub: false, GHBranch: "main", GHPath: "", GHMessage: "update cfdata results", EdgeTunnel: false, ETMode: "overwrite"}
+	return cliFileConfig{CLI: false, Mode: "official", ScanMode: "tcping", IPType: 4, Threads: 100, NSBThreads: 100, Out: "cfdata-results", SpeedTest: 0, Progress: true, NoColor: false, URL: autoSpeedURLValue, NSBURL: autoSpeedURLValue, DNS: defaultDNSServers, Debug: false, CompactIPv4: false, TestPort: 443, Delay: 500, NSBDelay: 0, DC: "", SpeedLimit: 5, SpeedMin: 0.1, File: "", SourceURL: "", NSBFallbackPort: 0, OutIPType: "all", OutQualified: "all", NSBDC: "", Relink: true, RelinkHost: "probe.609909.xyz", TLS: true, Compact: true, ResultLimit: 1000, NSBSpeedMin: 0.1, NSBSpeedLimit: 5, Format: "txt", Fields: "compact", Custom: "", V6Bracket: true, Separator: "-", OutStartRow: 1, OutEndRow: 20, GitHub: false, GHBranch: "main", GHPath: "", GHMessage: "update cfdata results", EdgeTunnel: false, ETMode: "overwrite"}
 }
 
 func (c cliFileConfig) Export() cliExportConfig {
@@ -595,7 +610,6 @@ func mergeCLIExportConfig(dst *cliExportConfig, src cliExportConfig, onlyProvide
 	}
 }
 
-// cliFileConfigJSONKeys 返回配置结构体全部 json 字段名，作为新模板的 key 基准。
 func cliFileConfigJSONKeys() map[string]bool {
 	keys := make(map[string]bool)
 	t := reflect.TypeOf(cliFileConfig{})
@@ -610,16 +624,10 @@ func cliFileConfigJSONKeys() map[string]bool {
 	return keys
 }
 
-// migrateConfigFileToLatest 新迁移机制：
-//   - 文件 key 与新模板 key 完全一致且 _config_version 为当前版本 → 不做任何改动
-//   - 无旧名键（仅版本旧或缺新键）→ 静默迁移：备份原文件 → 以新模板为基准把同名值迁入 → 写回新文件
-//   - 文件存在新模板不认识的旧名键 → 交互提示「配置文件存在更新，是否迁移同变量名的配置？」
-//     选 y：同上静默流程（只保留同名键，新增/改名项为默认值，提示用户自行设置）
-//     选 n 或非交互环境（stdin=/dev/null）：不改文件继续运行，下次启动再提示
 func migrateConfigFileToLatest(path string, data []byte) ([]byte, error) {
 	var raw map[string]interface{}
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return data, nil // 非 JSON：交由后续解析流程报错
+		return data, nil
 	}
 	templateKeys := cliFileConfigJSONKeys()
 	cfgObj := raw
@@ -645,7 +653,7 @@ func migrateConfigFileToLatest(path string, data []byte) ([]byte, error) {
 		version = strings.TrimSpace(version)
 	}
 	if len(unknown) == 0 && len(missing) == 0 && version == appVersion {
-		return data, nil // 与最新模板完全一致
+		return data, nil
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
@@ -669,7 +677,7 @@ func migrateConfigFileToLatest(path string, data []byte) ([]byte, error) {
 	}
 	newCfg := defaultCLIFileConfig()
 	if cfgBytes, err := json.Marshal(cfgObj); err == nil {
-		_ = json.Unmarshal(cfgBytes, &newCfg) // 同名值迁入新模板基准；缺键保持默认；旧名键自然丢弃
+		_ = json.Unmarshal(cfgBytes, &newCfg)
 	}
 	if err := writeCLIConfigTemplate(path, newCfg); err != nil {
 		return data, fmt.Errorf("写入迁移后的配置失败 %s: %w", path, err)
@@ -787,6 +795,9 @@ func buildCLIConfigHelp() []cliConfigHelp {
 		{Name: "nsbresultlimit", Description: "非标模式延迟测试结果上限；必须为非 0 正整数", Default: "1000"},
 		{Name: "nsbspeedmin", Description: "非标模式测速结果阈值，单位 MB/s", Default: "0.1"},
 		{Name: "nsbspeedlimit", Description: "非标模式测速结果上限；0 表示关闭测速", Default: "5"},
+		{Name: "relink", Description: "链路复验开关；开启后非标扫描完成时对结果做真实链路验证（TCP+TLS+HTTP 访问探针域），不可用的候选将被剔除", Default: "true", Options: []string{"true", "false"}},
+		{Name: "relinkhost", Description: "链路复验探针域名；默认使用内置公共探针，配合 relink 开关使用", Default: "probe.609909.xyz"},
+		{Name: "proxy", Description: "管理面代理；下载 ASN 库/locations、版本检查上传 GitHub/订阅等走此代理，扫描测速不受影响。支持 socks5://、socks5h://、http://、https://，留空使用系统环境变量代理", Default: ""},
 		{Name: "outformat", Description: "导出/上传内容格式", Default: "txt", Options: []string{"csv", "txt"}},
 		{Name: "outfields", Description: "导出字段；支持 compact、all、ipport 或逗号分隔字段 key；自定义字段可写在这里排序", Default: "compact", Options: []string{"compact", "all", "ipport", "ipport,dc,loc", "ipport,latency,dc,loc"}},
 		{Name: "outcustom", Description: "自定义导出字段，格式 标题:内容，多项用逗号分隔；未在 outfields 中排序时默认追加到最后。兼容 key=标题:内容", Default: ""},
@@ -903,6 +914,18 @@ func applyCLIFileConfig(cfg *cliConfig, fileCfg cliFileConfig, provided map[stri
 	setInt("nsbresultlimit", &cfg.resultLimit, fileCfg.ResultLimit)
 	setFloat("nsbspeedmin", &cfg.nsbSpeedMin, fileCfg.NSBSpeedMin)
 	setInt("nsbspeedlimit", &cfg.nsbSpeedLimit, fileCfg.NSBSpeedLimit)
+	if !provided["relink"] {
+		cfg.relink = fileCfg.Relink
+	}
+	setString("relinkhost", &cfg.relinkHost, fileCfg.RelinkHost)
+
+	proxyValue := strings.TrimSpace(fileCfg.Proxy)
+	if provided["proxy"] {
+		proxyValue = strings.TrimSpace(proxyFlag)
+	}
+	if err := setManagementProxy(proxyValue); err != nil {
+		fmt.Printf("[proxy] 管理面代理配置无效，未启用: %v\n", err)
+	}
 
 	genericURL := speedTestURL
 	if isNSBRun {
@@ -1239,7 +1262,7 @@ func runNSBCLI(cfg *cliConfig) error {
 			return errors.New("-nsbsourceurl 必须是有效的 http/https 地址")
 		}
 		inputName = cfg.sourceURL
-		content, err = getURLContent(cfg.sourceURL)
+		content, err = getURLContentViaProxy(context.Background(), cfg.sourceURL)
 		if err != nil {
 			return fmt.Errorf("获取非标网络输入失败: %w", err)
 		}
@@ -1251,7 +1274,12 @@ func runNSBCLI(cfg *cliConfig) error {
 		if scanMode == "" {
 			scanMode = scanModeTCPing
 		}
-		runNSBTask(ctx, session, inputName, content, cfg.outFile, cfg.threads, cfg.nsbFallbackPort, cfg.speedTest, speedTestURL, cfg.enableTLS, cfg.delay, cfg.resultLimit, cfg.nsbDC, cfg.nsbSpeedMin, cfg.nsbSpeedLimit, cfg.compactNSB, scanMode)
+		runNSBTask(ctx, session, inputName, content, cfg.outFile, cfg.threads, cfg.nsbFallbackPort, cfg.speedTest, speedTestURL, cfg.enableTLS, cfg.delay, cfg.resultLimit, cfg.nsbDC, cfg.nsbSpeedMin, cfg.nsbSpeedLimit, cfg.compactNSB, scanMode, func() string {
+			if !cfg.relink {
+				return ""
+			}
+			return cfg.relinkHost
+		}())
 	}); err != nil {
 		return cliTaskError(err)
 	}
@@ -1412,16 +1440,6 @@ func printCLIConfig(cfg *cliConfig) {
 	fmt.Println(colorize("----------------------------------------", ansiCyan))
 }
 
-func maskSecret(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return ""
-	}
-	if len(value) <= 8 {
-		return "********"
-	}
-	return value[:4] + "..." + value[len(value)-4:]
-}
-
 func printCLIUsage() {
 	printBanner()
 	fmt.Fprintf(flag.CommandLine.Output(), "%s\n", colorize("CFData 命令行帮助", ansiBold+ansiGreen))
@@ -1429,7 +1447,7 @@ func printCLIUsage() {
 	checkAndPrintUpdate("")
 	fmt.Fprintf(flag.CommandLine.Output(), "\n")
 	fmt.Fprintf(flag.CommandLine.Output(), "默认行为: 不带 -cli 时启动 Web 服务；-cli 进入交互菜单；-cli qs 按配置快速启动\n")
-	fmt.Fprintf(flag.CommandLine.Output(), "CLI 用法: ./cfdata-test -cli（菜单）或 -cli qs（快速启动）或 -cli -mode=official ...（直接执行）\n")
+	fmt.Fprintf(flag.CommandLine.Output(), "CLI 用法: 程序名 -cli（菜单）或 -cli qs（快速启动）或 -cli -mode=official ...（直接执行）\n")
 	fmt.Fprintf(flag.CommandLine.Output(), "\n")
 	printCLIUsageGroup("通用参数", cliCommonFlags)
 	printCLIUsageGroup("官方模式参数", cliOfficialFlags)
@@ -1661,7 +1679,7 @@ func writeCLIExportAndMaybeUpload(cfg *cliConfig, rows []cliResultRow, mode stri
 	}
 	filename := cfg.outFile
 	if strings.TrimSpace(filename) == "" {
-		filename = "ip." + cfg.export.Format
+		filename = "cfdata-results." + cfg.export.Format
 	}
 	if ext := "." + cfg.export.Format; !strings.HasSuffix(strings.ToLower(filename), ext) {
 		filename = strings.TrimSuffix(filename, filepath.Ext(filename)) + ext

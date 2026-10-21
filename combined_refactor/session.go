@@ -314,7 +314,7 @@ func (s *appSession) applyBackgroundMessageLocked(msgType string, data interface
 		phase := fmt.Sprint(m["phase"])
 		current := asInt(m["current"])
 		total := asInt(m["total"])
-		
+
 		if phase == "scan" {
 			s.backgroundSnapshot.ScanFailed = max(current-s.backgroundSnapshot.ScanSuccess, 0)
 		} else if phase == "speed" {

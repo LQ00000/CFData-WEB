@@ -1086,6 +1086,16 @@
             overflow-x: hidden;
         }
 
+        .sort-modal-section-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 1px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 4px;
+            margin-bottom: 2px;
+        }
+
         .modal-field {
             display: flex;
             flex-direction: column;
@@ -1464,14 +1474,6 @@
                 width: 100%;
             }
 
-            #nsbTableIPTypeFilter {
-                width: 100%;
-            }
-
-            #nsbTableQualifiedFilter {
-                width: 100%;
-            }
-
             #test .section-box h3 .table-actions {
                 display: grid;
                 grid-template-columns: 1fr;
@@ -1482,11 +1484,6 @@
                 display: grid;
                 grid-template-columns: minmax(0, 1fr);
                 gap: 8px;
-                width: 100%;
-            }
-
-            #officialTestQualifiedFilter {
-                align-self: stretch;
                 width: 100%;
             }
 
@@ -1647,6 +1644,18 @@
             </div>
             <div class="settings-title">本地缓存</div>
             <button class="danger-btn" onclick="resetAllConfig()">恢复全部默认配置</button>
+
+            <div class="settings-title" style="margin-top:12px;">🌐 管理面代理</div>
+            <div class="upload-status" id="proxyStatusText">未启用（可用系统环境变量代理）</div>
+            <div id="proxySourceText" style="font-size:11px;color:var(--text-secondary);margin-top:2px;"></div>
+            <input id="proxyInput" type="text" placeholder="socks5://127.0.0.1:1080 或 http://127.0.0.1:8080" style="width:100%;margin-top:6px;">
+            <div class="theme-options" style="display:flex;gap:8px;margin-top:6px;">
+                <button class="menu-btn" style="flex:1;" onclick="saveManagementProxy()">保存</button>
+                <button class="menu-btn" style="flex:1;" onclick="clearManagementProxy()">清除</button>
+            </div>
+            <div style="font-size:11px;line-height:1.5;color:var(--text-secondary);margin-top:6px;">
+                仅作用于下载 ASN 库/locations、版本检查、GitHub/订阅上传等管理操作；扫描与测速保持直连。程序配置优先生效，未配置时使用系统环境变量代理。
+            </div>
         </div>
 
         <div id="configMenu" class="settings-menu hidden">
@@ -1880,6 +1889,22 @@
                     </div>
                 </div>
                 <div class="option-item full-width">
+                    <span class="label" title="扫描完成后对结果做真实链路验证（TCP+TLS+HTTP），不可用的候选将被剔除；默认关闭，开启自动测速时自动跟随执行">🔬 链路复验</span>
+                    <div class="field-with-action">
+                        <select id="nsbRelinkPreset" class="speed-url-select" onchange="applyRelinkPreset()">
+                            <option value="off" selected>关闭</option>
+                            <option value="default">公共探针</option>
+                            <option value="custom">手动输入</option>
+                        </select>
+                        <input id="nsbRelinkHost" type="text" value="已关闭" style="flex: 1 1 120px;"
+                            placeholder="输入自定义探针域名" oninput="markRelinkCustom()">
+                        <button class="mini-action-btn" title="链路复验：对当前结果执行真实链路验证（需二次确认）"
+                            onclick="startNSBReallink()">🔬</button>
+                        <button class="mini-action-btn" title="恢复公共探针"
+                            onclick="resetRelinkDefault()">↺</button>
+                    </div>
+                </div>
+                <div class="option-item full-width">
                     <span class="label">⬆ 自动上传</span>
                     <select id="nsbAutoUploadAccount"></select>
                 </div>
@@ -1955,19 +1980,9 @@
                     <span>扫描结果 <span class="badge" id="scanCount">0</span></span>
                     <span class="table-actions">
                         <span class="nsb-scan-actions" id="nsbScanActions">
-                            <select id="nsbTableIPTypeFilter" class="table-filter-select" onchange="setNSBTableIPTypeFilter(this.value)">
-                                <option value="all" selected>展示全部类型</option>
-                                <option value="ipv4">仅展示IPV4</option>
-                                <option value="ipv6">仅展示IPV6</option>
-                            </select>
-                            <select id="nsbTableQualifiedFilter" class="table-filter-select" onchange="setNSBTableQualifiedFilter(this.value)">
-                                <option value="all" selected>展示全部结果</option>
-                                <option value="qualified">仅展示合格</option>
-                                <option value="unqualified">仅展示不合格</option>
-                            </select>
                             <button class="action-btn export-btn" id="btnNSBBatchSpeed" onclick="startNSBBatchSpeed(false)" disabled>🚀 一键测速</button>
                             <button class="action-btn export-btn" id="btnNSBContinueSpeed" onclick="startNSBBatchSpeed(true)" disabled>⏭️ 继续测速</button>
-                            <button class="action-btn export-btn" id="btnNSBSort" onclick="openSortModal('nsb')">↕️ 一键排序</button>
+                            <button class="action-btn export-btn" id="btnNSBSort" onclick="openSortModal('nsb')">🔎 筛选排序</button>
                             <button class="action-btn export-btn" id="btnScanCopy" onclick="openCopyModal('scan')">📋 一键复制</button>
                             <button class="action-btn export-btn" id="btnScanResultAction" onclick="openResultModal('scan')">📥 结果操作</button>
                         </span>
@@ -1998,14 +2013,9 @@
                     <span>详细测试结果 <span class="badge" id="testCount">0</span></span>
                     <span class="table-actions">
                         <span class="official-test-actions">
-                            <select id="officialTestQualifiedFilter" class="table-filter-select" style="display:inline-block;" onchange="setOfficialTestQualifiedFilter(this.value)">
-                                <option value="all" selected>展示全部结果</option>
-                                <option value="qualified">仅展示合格</option>
-                                <option value="unqualified">仅展示不合格</option>
-                            </select>
                             <button class="action-btn export-btn" id="btnBatchSpeed" onclick="startOfficialBatchSpeed(false)" disabled>🚀 一键测速</button>
                             <button class="action-btn export-btn" id="btnContinueBatchSpeed" onclick="startOfficialBatchSpeed(false, true)" disabled>⏭️ 继续测速</button>
-                            <button class="action-btn export-btn" id="btnTestSort" onclick="openSortModal('official')">↕️ 一键排序</button>
+                            <button class="action-btn export-btn" id="btnTestSort" onclick="openSortModal('official')">🔎 筛选排序</button>
                             <button class="action-btn export-btn" id="btnTestCopy" onclick="openCopyModal('test')">📋 一键复制</button>
                             <button class="action-btn export-btn" id="btnTestResultAction" onclick="openResultModal('test')">📥 结果操作</button>
                         </span>
@@ -2082,6 +2092,14 @@
                             <option value="qualified">仅导出合格</option>
                             <option value="unqualified">仅导出不合格</option>
                         </select>
+                    </div>
+                    <div class="modal-field">
+                        <label>延迟低于（毫秒，0=不限制）</label>
+                        <input id="resultLatencyFilter" type="number" min="0" step="1" value="0" oninput="updateResultPreview()">
+                    </div>
+                    <div class="modal-field">
+                        <label>丢包低于（%，100=不限制）</label>
+                        <input id="resultLossFilter" type="number" min="0" max="100" step="0.01" value="100" oninput="updateResultPreview()">
                     </div>
                     <div class="modal-field full">
                         <label>输出示例</label>
@@ -2168,6 +2186,10 @@
                     <div class="modal-field full github-field">
                         <label>上传状态</label>
                         <div class="upload-status" id="githubUploadStatus">等待上传</div>
+                    </div>
+                    <div class="modal-field full">
+                        <label>上传失败提示</label>
+                        <div class="upload-status" id="uploadProxyHint">上传失败？可在右上角设置菜单配置代理后重试；支持程序配置（socks5://、http:// 等）与系统环境变量代理，扫描测速不受影响。</div>
                     </div>
                     <div class="modal-field edgetunnel-field">
                         <label>edgetunnel 账户</label>
@@ -2300,10 +2322,38 @@
     <div class="modal-mask" id="sortModalMask">
         <div class="result-modal">
             <div class="modal-head">
-                <h3 id="sortModalTitle">一键排序</h3>
+                <h3 id="sortModalTitle">筛选排序</h3>
                 <button class="modal-close" onclick="closeSortModal()">×</button>
             </div>
             <div class="modal-body">
+                <div class="sort-modal-section-title">筛选</div>
+                <div class="modal-grid">
+                    <div class="modal-field" id="sortFilterIPTypeField">
+                        <label>IP 类型筛选</label>
+                        <select id="sortFilterIPType">
+                            <option value="all" selected>展示全部类型</option>
+                            <option value="ipv4">仅展示IPV4</option>
+                            <option value="ipv6">仅展示IPV6</option>
+                        </select>
+                    </div>
+                    <div class="modal-field">
+                        <label>结果筛选（合格/不合格）</label>
+                        <select id="sortFilterQualified">
+                            <option value="all" selected>展示全部结果</option>
+                            <option value="qualified">仅展示合格</option>
+                            <option value="unqualified">仅展示不合格</option>
+                        </select>
+                    </div>
+                    <div class="modal-field">
+                        <label>延迟低于（毫秒，0=不限制）</label>
+                        <input id="sortFilterLatency" type="number" min="0" step="1" value="0">
+                    </div>
+                    <div class="modal-field">
+                        <label>丢包低于（%，100=不限制）</label>
+                        <input id="sortFilterLoss" type="number" min="0" max="100" step="0.01" value="100">
+                    </div>
+                </div>
+                <div class="sort-modal-section-title" style="margin-top:14px;">排序</div>
                 <div class="modal-grid">
                     <div class="modal-field">
                         <label>第 1 优先级</label>
@@ -2331,12 +2381,12 @@
                     </div>
                     <div class="modal-field full">
                         <label>排序说明</label>
-                        <pre class="result-preview">丢包率和延迟按从低到高排序；网速按从高到低排序。网速为空或未测速会排在测速失败前面。</pre>
+                        <pre class="result-preview">筛选：延迟/丢包为空或测速失败的行，在启用对应筛选后会被隐藏；0ms 与 100% 表示不限制。排序：丢包率和延迟按从低到高排序；网速按从高到低排序。网速为空或未测速会排在测速失败前面。</pre>
                     </div>
                 </div>
             </div>
             <div class="modal-actions footer">
-                <button class="action-btn export-btn" onclick="applySortModal()">应用排序</button>
+                <button class="action-btn export-btn" onclick="applySortModal()">应用筛选排序</button>
             </div>
         </div>
     </div>
@@ -2361,6 +2411,7 @@
         let defaultSpeedTestUrl = "speed.okl.abrdns.com";
         let isTaskRunning = false;
         let isStoppingTask = false;
+        let nsbReallinkRunning = false;
         let scanData = [];
         let testData = [];
         let dcList = [];
@@ -2380,11 +2431,15 @@
         let nsbCompactView = true;
         let nsbTableIPTypeFilter = 'all';
         let nsbTableQualifiedFilter = 'all';
+        let nsbTableLatencyFilter = 0;
+        let nsbTableLossFilter = 100;
         let nsbSpeedMinValue = 0;
         let nsbSpeedEnabledForResults = false;
         const AUTO_SPEED_URL_VALUE = 'auto';
         const AUTO_SPEED_URL_LABEL = '自动选择';
         let officialTestQualifiedFilter = 'all';
+        let officialTestLatencyFilter = 0;
+        let officialTestLossFilter = 100;
         let officialSpeedMinValue = 0.1;
         let officialSpeedEnabledForResults = false;
         let officialAutoSpeedPending = false;
@@ -2528,6 +2583,7 @@
             if (!menu.classList.contains('hidden')) {
                 menu.classList.add('no-transition');
                 setTimeout(() => menu.classList.remove('no-transition'), 0);
+                wsSend({ type: 'get_management_proxy' });
             }
         }
 
@@ -2680,6 +2736,55 @@
             syncSpeedUrlPreset(targetId, presetId);
         }
 
+        function applyProxyStatus(payload) {
+            const source = (payload && payload.source) || '';
+            const enabled = source === '程序配置' || source === '系统环境变量';
+            const statusEl = document.getElementById('proxyStatusText');
+            if (statusEl) {
+                statusEl.textContent = enabled ? `已启用: ${payload.label}` : '未启用（可用系统环境变量代理）';
+            }
+            const sourceEl = document.getElementById('proxySourceText');
+            if (sourceEl) sourceEl.textContent = source ? `代理来源: ${source}` : '代理来源: 未设置';
+            const hintEl = document.getElementById('uploadProxyHint');
+            if (hintEl) {
+                hintEl.textContent = enabled
+                    ? `上传失败？可在设置菜单更换/清除代理后重试；当前代理: ${payload.label}。扫描测速不受代理影响。`
+                    : '上传失败？可在设置菜单配置代理后重试；支持程序配置（socks5://、http:// 等）与系统环境变量代理，扫描测速不受影响。';
+            }
+        }
+
+        function saveManagementProxy() {
+            const input = document.getElementById('proxyInput');
+            const value = input ? input.value.trim() : '';
+            if (!value) return showNoticeCard('请输入代理地址，例如 socks5://127.0.0.1:1080；(清除请用「清除」按钮)');
+            if (!wsSend({ type: 'set_management_proxy', data: { value } })) {
+                showNoticeCard('与服务端的连接尚未就绪，请稍后再试');
+            }
+        }
+
+        function clearManagementProxy() {
+            if (!wsSend({ type: 'set_management_proxy', data: { value: '' } })) {
+                showNoticeCard('与服务端的连接尚未就绪，请稍后再试');
+            }
+        }
+
+        function applySpeedURLStatus(payload) {
+            if (!payload || !Array.isArray(payload.urls)) return;
+            const entries = payload.urls;
+            const presetIds = ['officialSpeedUrlPreset', 'nsbSpeedUrlPreset'];
+            for (const presetId of presetIds) {
+                const preset = document.getElementById(presetId);
+                if (!preset) continue;
+                for (const opt of preset.options) {
+                    if (opt.value === AUTO_SPEED_URL_VALUE || opt.value === 'custom') continue;
+                    let label = opt.textContent.replace(/（不可用）$/, '');
+                    const entry = entries.find((item) => item.url === opt.value);
+                    if (entry && entry.tested && entry.available === false) label += '（不可用）';
+                    opt.textContent = label;
+                }
+            }
+        }
+
         function resetAllConfig() {
             showConfirmCard('这会清掉本地缓存文件：ips-v4.txt、ips-v6.txt、locations.json、GeoLite2-ASN.mmdb。\n要继续吗？', confirmResetAllConfig, '清理本地缓存');
         }
@@ -2769,6 +2874,11 @@
             if (n.compactView) setValue('nsbCompactView', n.compactView);
             setValue('nsbOutFile', n.outFile);
             setValue('nsbSourceUrl', n.sourceUrl);
+            if (n.relinkPreset !== undefined) {
+                setValue('nsbRelinkPreset', n.relinkPreset);
+                if (n.relinkHost !== undefined) setValue('nsbRelinkHost', n.relinkHost);
+                syncRelinkControls();
+            }
             if (o.speedUrl) applySpeedUrlConfig('officialSpeedUrl', 'officialSpeedUrlPreset', o.speedUrl);
             if (n.speedUrl) applySpeedUrlConfig('nsbSpeedUrl', 'nsbSpeedUrlPreset', n.speedUrl);
             syncOfficialSpeedConfigState();
@@ -2844,6 +2954,18 @@
             if (compact !== undefined) result.nsb.compactView = compact === true || String(compact).toLowerCase() === 'true' || String(compact) === '1' ? 'compact' : 'full';
             result.nsb.outFile = pick(c, ['out', 'nsbout', 'offout']);
             result.nsb.sourceUrl = pick(c, ['nsbsourceurl', 'sourceurl']);
+            const relinkOff = c.relink === false || String(c.relink).toLowerCase() === 'false' || String(c.relink) === '0';
+            const rawRelinkHost = String(c.relinkhost || '').trim();
+            if (relinkOff) {
+                result.nsb.relinkPreset = 'off';
+                result.nsb.relinkHost = '已关闭';
+            } else if (rawRelinkHost && rawRelinkHost !== 'probe.609909.xyz') {
+                result.nsb.relinkPreset = 'custom';
+                result.nsb.relinkHost = rawRelinkHost;
+            } else {
+                result.nsb.relinkPreset = 'default';
+                result.nsb.relinkHost = rawRelinkHost || '已关闭';
+            }
             return result;
         }
 
@@ -3633,6 +3755,7 @@
             officialAutoStage = '';
             officialBatchSpeedRunning = false;
             nsbBatchSpeedRunning = false;
+            nsbReallinkRunning = false;
             officialTestCompletePending = false;
             officialSpeedEndedByRateLimit = false;
             currentTestingDC = '';
@@ -3692,16 +3815,6 @@
                 compactToggle.value = nsbCompactView ? 'compact' : 'full';
                 compactToggle.disabled = isTaskRunning;
             }
-            const filter = document.getElementById('nsbTableIPTypeFilter');
-            if (filter) {
-                filter.style.display = currentMode === 'nsb' ? 'inline-block' : 'none';
-                filter.value = nsbTableIPTypeFilter;
-            }
-            const qualifiedFilter = document.getElementById('nsbTableQualifiedFilter');
-            if (qualifiedFilter) {
-                qualifiedFilter.style.display = currentMode === 'nsb' ? 'inline-block' : 'none';
-                qualifiedFilter.value = nsbTableQualifiedFilter;
-            }
             updateNSBSpeedButtons();
         }
 
@@ -3744,6 +3857,105 @@
                 speedURL: resolveSpeedTestUrl('nsbSpeedUrl', 'nsbSpeedUrlPreset'),
                 enableTLS: tlsMode !== 'off',
             };
+        }
+
+        const NSB_RELINK_DEFAULT_HOST = 'probe.609909.xyz';
+
+        function syncRelinkControls() {
+            const preset = document.getElementById('nsbRelinkPreset');
+            const input = document.getElementById('nsbRelinkHost');
+            if (!preset || !input) return;
+            if (preset.value === 'off') {
+                input.value = '已关闭';
+            } else if (preset.value === 'custom') {
+                if (!input.value.trim() || input.value === '已关闭' || input.value === '公共探针') input.value = '';
+            } else {
+                preset.value = 'default';
+                input.value = '公共探针';
+            }
+        }
+
+        function applyRelinkPreset() {
+            syncRelinkControls();
+        }
+
+        function markRelinkCustom() {
+            const preset = document.getElementById('nsbRelinkPreset');
+            const input = document.getElementById('nsbRelinkHost');
+            if (!preset || !input) return;
+            if (input.readOnly) input.readOnly = false;
+            preset.value = 'custom';
+        }
+
+        function resetRelinkDefault() {
+            const preset = document.getElementById('nsbRelinkPreset');
+            const input = document.getElementById('nsbRelinkHost');
+            if (input) {
+                input.value = '公共探针';
+                input.readOnly = false;
+            }
+            if (preset) preset.value = 'default';
+        }
+
+        function getNSBRelinkHost(followAutoSpeed = false) {
+            const preset = document.getElementById('nsbRelinkPreset');
+            const input = document.getElementById('nsbRelinkHost');
+            if (preset && preset.value === 'off') {
+                if (followAutoSpeed) return NSB_RELINK_DEFAULT_HOST;
+                return '';
+            }
+            if (preset && preset.value === 'custom') {
+                const custom = (input && input.value ? input.value : '').trim();
+                return custom || NSB_RELINK_DEFAULT_HOST;
+            }
+            return NSB_RELINK_DEFAULT_HOST;
+        }
+
+        function startNSBReallink() {
+            if (nsbReallinkRunning || isTaskRunning || nsbBatchSpeedRunning) {
+                showNoticeCard('当前有任务正在运行，请等待完成后再复验');
+                return;
+            }
+            if (currentMode !== 'nsb') {
+                showNoticeCard('请切换到非标模式后再复验');
+                return;
+            }
+            const rows = getNSBSpeedTargetRows();
+            if (!rows.length) {
+                showNoticeCard('当前没有可复验的非标结果');
+                return;
+            }
+            const probeHost = getNSBRelinkHost() || NSB_RELINK_DEFAULT_HOST;
+            showConfirmCard(`确认开始链路复验？将对 ${rows.length} 个候选进行真实链路验证（TCP+TLS+HTTP），不可用的候选将从结果中剔除。`, () => {
+                const speedCfg = syncNSBSpeedConfigState();
+                const outFile = document.getElementById('nsbOutFile')?.value.trim() || 'ip.csv';
+                nsbReallinkRunning = true;
+                isTaskRunning = true;
+                isStoppingTask = false;
+                runningTaskLabel = '链路复验';
+                runningTaskMode = 'nsb';
+                setStartLoading('链路复验中...');
+                resetProgress();
+                progressBox.style.display = 'block';
+                updateNSBSpeedButtons();
+                if (!wsSend({ type: 'start_nsb_reallink', data: {
+                    results: rows,
+                    relinkHost: probeHost,
+                    outFile,
+                    speedTest: speedCfg.speedTest,
+                    speedURL: speedCfg.speedURL,
+                    enableTLS: speedCfg.enableTLS,
+                    speedMin: speedCfg.speedMin,
+                    speedLimit: speedCfg.speedLimit,
+                    compact: nsbCompactView,
+                    scanMode: getScanMode(),
+                } })) {
+                    nsbReallinkRunning = false;
+                    isTaskRunning = false;
+                    finishRunningTask('✨ 开始扫描与测试');
+                    showNoticeCard('连接未就绪，请等待重连后再试');
+                }
+            }, '确认链路复验');
         }
 
         function setNSBCompactView(enabled) {
@@ -3911,7 +4123,7 @@
             const visibleHeaders = filterNSBHeaders(headers);
             const originalInputIndex = headers.map(normalizeNSBHeader).indexOf('原始输入');
 
-            const filteredRows = filterNSBRowsByQualified(filterNSBRowsByIPType(headers, rows, nsbTableIPTypeFilter), headers, nsbTableQualifiedFilter);
+            const filteredRows = filterNSBRowsByLatencyLoss(filterNSBRowsByQualified(filterNSBRowsByIPType(headers, rows, nsbTableIPTypeFilter), headers, nsbTableQualifiedFilter), headers);
             filteredRows.forEach((r) => {
                 const visibleRow = filterNSBRow(headers, r);
                 const originalInput = originalInputIndex !== -1 ? r[originalInputIndex] : undefined;
@@ -3971,7 +4183,7 @@
             const tbody = document.querySelector('#scanTable tbody');
             tbody.innerHTML = '';
             nsbLiveRowElements = {};
-            const rows = nsbLiveRows.filter((row) => matchesIPTypeFilter(row.ipType, nsbTableIPTypeFilter) && matchesQualifiedFilter(row, nsbTableQualifiedFilter));
+            const rows = nsbLiveRows.filter((row) => matchesIPTypeFilter(row.ipType, nsbTableIPTypeFilter) && matchesQualifiedFilter(row, nsbTableQualifiedFilter) && matchesLatencyLossFilter(latencyMsForFilter(row.latency), parseFilterNumber(row.lossRate)));
             rows.forEach((row) => {
                 appendNSBLiveRow(row);
             });
@@ -3997,7 +4209,7 @@
         function updateNSBLiveRowElement(row) {
             const key = (row.ip || '') + ':' + (row.port || '');
             const existing = nsbLiveRowElements[key];
-            const visible = matchesIPTypeFilter(row.ipType, nsbTableIPTypeFilter) && matchesQualifiedFilter(row, nsbTableQualifiedFilter);
+            const visible = matchesIPTypeFilter(row.ipType, nsbTableIPTypeFilter) && matchesQualifiedFilter(row, nsbTableQualifiedFilter) && matchesLatencyLossFilter(latencyMsForFilter(row.latency), parseFilterNumber(row.lossRate));
             if (!visible) {
                 if (existing) {
                     existing.remove();
@@ -4016,7 +4228,7 @@
         }
 
         function updateNSBLiveBadgeFromData() {
-            updateBadge('scanCount', nsbLiveRows.filter((item) => matchesIPTypeFilter(item.ipType, nsbTableIPTypeFilter) && matchesQualifiedFilter(item, nsbTableQualifiedFilter)).length);
+            updateBadge('scanCount', nsbLiveRows.filter((item) => matchesIPTypeFilter(item.ipType, nsbTableIPTypeFilter) && matchesQualifiedFilter(item, nsbTableQualifiedFilter) && matchesLatencyLossFilter(latencyMsForFilter(item.latency), parseFilterNumber(item.lossRate))).length);
         }
 
         function addNSBLiveResult(row, render = true) {
@@ -4043,7 +4255,7 @@
                 updateNSBSpeedButtons();
                 return;
             }
-            if (!matchesIPTypeFilter(row.ipType, nsbTableIPTypeFilter) || !matchesQualifiedFilter(row, nsbTableQualifiedFilter)) {
+            if (!matchesIPTypeFilter(row.ipType, nsbTableIPTypeFilter) || !matchesQualifiedFilter(row, nsbTableQualifiedFilter) || !matchesLatencyLossFilter(latencyMsForFilter(row.latency), parseFilterNumber(row.lossRate))) {
                 updateBadge('scanCount', document.querySelector('#scanTable tbody').children.length);
                 updateNSBSpeedButtons();
                 return;
@@ -4170,6 +4382,46 @@
             return status === filter;
         }
 
+        function parseFilterNumber(value) {
+            const text = String(value ?? '').trim().replace('%', '').replace(/ms$/i, '').trim();
+            const parsed = parseFloat(text);
+            return Number.isFinite(parsed) ? parsed : NaN;
+        }
+
+        function latencyMsForFilter(latency) {
+            if (Array.isArray(latency)) return parseFilterNumber(latency[latency.length - 1]);
+            return parseFilterNumber(latency);
+        }
+
+        function matchesLatencyLossFilter(latencyMs, lossPct) {
+            latencyMs = Number(latencyMs);
+            lossPct = Number(lossPct);
+            if (nsbTableLatencyFilter > 0 && !(Number.isFinite(latencyMs) && latencyMs < nsbTableLatencyFilter)) return false;
+            if (nsbTableLossFilter < 100 && !(Number.isFinite(lossPct) && lossPct < nsbTableLossFilter)) return false;
+            return true;
+        }
+
+        function officialLatencyLossMatch(item) {
+            const latencyMs = (item.AvgLatency || 0) / 1_000_000;
+            const lossPct = (item.LossRate ?? 0) * 100;
+            if (officialTestLatencyFilter > 0 && !(latencyMs < officialTestLatencyFilter)) return false;
+            if (officialTestLossFilter < 100 && !(lossPct < officialTestLossFilter)) return false;
+            return true;
+        }
+
+        function filterNSBRowsByLatencyLoss(rows, headers) {
+            if (nsbTableLatencyFilter <= 0 && nsbTableLossFilter >= 100) return rows || [];
+            const normalized = (headers || []).map(normalizeNSBHeader);
+            const latencyIndex = normalized.indexOf('网络延迟');
+            const lossIndex = normalized.indexOf('丢包率');
+            if (latencyIndex < 0 && lossIndex < 0) return rows || [];
+            return (rows || []).filter((row) => {
+                const latencyMs = latencyIndex >= 0 ? parseFilterNumber(row[latencyIndex]) : NaN;
+                const lossPct = lossIndex >= 0 ? parseFilterNumber(row[lossIndex]) : NaN;
+                return matchesLatencyLossFilter(latencyMs, lossPct);
+            });
+        }
+
         function filterNSBRowsByQualified(rows, headers, filter) {
             filter = normalizeQualifiedFilter(filter);
             if (filter === 'all') return rows || [];
@@ -4251,6 +4503,8 @@
             officialSpeedEnabledForResults = false;
             officialContinueSpeedUnlocked = false;
             setOfficialTestQualifiedFilter('all');
+            officialTestLatencyFilter = 0;
+            officialTestLossFilter = 100;
             currentTestingDC = dc;
             document.querySelector('#testTable tbody').innerHTML = '';
             document.getElementById('currentTestDC').textContent = `测试中: ${dc}`;
@@ -4296,7 +4550,7 @@
         }
 
         function getFilteredOfficialTestData() {
-            return testData.filter((row) => matchesOfficialQualifiedFilter(row, officialTestQualifiedFilter));
+            return testData.filter((row) => matchesOfficialQualifiedFilter(row, officialTestQualifiedFilter) && officialLatencyLossMatch(row));
         }
 
         function setOfficialTestQualifiedFilter(value) {
@@ -4454,6 +4708,8 @@
                 testData.forEach((row) => { row.Speed = ''; });
             }
             setOfficialTestQualifiedFilter('all');
+            officialTestLatencyFilter = 0;
+            officialTestLossFilter = 100;
             renderAllTestResults();
             setStartLoading(getRunningButtonText());
             resetProgress();
@@ -4505,6 +4761,8 @@
                 rows.forEach((row) => { row.speed = ''; });
             }
             setNSBTableQualifiedFilter('all');
+            nsbTableLatencyFilter = 0;
+            nsbTableLossFilter = 100;
             setStartLoading(getRunningButtonText());
             resetProgress();
             progressBox.style.display = 'block';
@@ -4721,6 +4979,8 @@
             nsbCompactView = document.getElementById('nsbCompactView')?.value !== 'full';
             const compact = nsbCompactView;
             nsbTableQualifiedFilter = 'all';
+            nsbTableLatencyFilter = 0;
+            nsbTableLossFilter = 100;
             setNSBTableQualifiedFilter('all');
 
             if (isNaN(speedTestInput) || speedTestInput < 0) {
@@ -4783,6 +5043,7 @@
                     speedLimit,
                     compact,
                     scanMode: getScanMode(),
+                    relinkHost: getNSBRelinkHost(speedTest > 0),
                 }
             })) {
                 finishRunningTask('✨ 开始扫描与测试');
@@ -4859,8 +5120,50 @@
             sortModalMode = mode === 'nsb' ? 'nsb' : 'official';
             const count = sortModalMode === 'nsb' ? (nsbRows.length || nsbLiveRows.length) : testData.length;
             if (!count) return showNoticeCard('暂无可排序结果');
-            document.getElementById('sortModalTitle').textContent = sortModalMode === 'nsb' ? '非标测速一键排序' : '官方详细测试一键排序';
+            publishSortFilterControls();
+            document.getElementById('sortModalTitle').textContent = sortModalMode === 'nsb' ? '非标测速 筛选排序' : '官方详细测试 筛选排序';
             document.getElementById('sortModalMask').classList.add('active');
+        }
+
+        function publishSortFilterControls() {
+            const ipTypeField = document.getElementById('sortFilterIPTypeField');
+            if (ipTypeField) ipTypeField.style.display = sortModalMode === 'nsb' ? '' : 'none';
+            const latencyInput = document.getElementById('sortFilterLatency');
+            const lossInput = document.getElementById('sortFilterLoss');
+            if (sortModalMode === 'nsb') {
+                const ipTypeSelect = document.getElementById('sortFilterIPType');
+                if (ipTypeSelect) ipTypeSelect.value = nsbTableIPTypeFilter;
+                const qualifiedSelect = document.getElementById('sortFilterQualified');
+                if (qualifiedSelect) qualifiedSelect.value = nsbTableQualifiedFilter;
+                if (latencyInput) latencyInput.value = nsbTableLatencyFilter;
+                if (lossInput) lossInput.value = nsbTableLossFilter;
+            } else {
+                const qualifiedSelect = document.getElementById('sortFilterQualified');
+                if (qualifiedSelect) qualifiedSelect.value = officialTestQualifiedFilter;
+                if (latencyInput) latencyInput.value = officialTestLatencyFilter;
+                if (lossInput) lossInput.value = officialTestLossFilter;
+            }
+        }
+
+        function applySortModalFilters() {
+            let latencyFilter = parseFloat(document.getElementById('sortFilterLatency')?.value);
+            if (!Number.isFinite(latencyFilter) || latencyFilter < 0) latencyFilter = 0;
+            let lossFilter = parseFloat(document.getElementById('sortFilterLoss')?.value);
+            if (!Number.isFinite(lossFilter)) lossFilter = 100;
+            lossFilter = Math.min(100, Math.max(0, lossFilter));
+            if (lossFilter <= 0) lossFilter = 0.01;
+            const qualifiedSelect = document.getElementById('sortFilterQualified');
+            if (sortModalMode === 'nsb') {
+                nsbTableIPTypeFilter = normalizeIPTypeFilter(document.getElementById('sortFilterIPType')?.value || 'all');
+                nsbTableQualifiedFilter = normalizeQualifiedFilter(qualifiedSelect?.value || 'all');
+                nsbTableLatencyFilter = latencyFilter;
+                nsbTableLossFilter = lossFilter;
+            } else {
+                officialTestQualifiedFilter = normalizeQualifiedFilter(qualifiedSelect?.value || 'all');
+                officialTestLatencyFilter = latencyFilter;
+                officialTestLossFilter = lossFilter;
+            }
+            return { latencyFilter, lossFilter };
         }
 
         function closeSortModal() {
@@ -4927,6 +5230,16 @@
         }
 
         function applySortModal() {
+            applySortModalFilters();
+            if (sortModalMode === 'nsb') {
+                if (nsbRows.length) {
+                    renderScanRowsCSV(nsbHeaders, nsbRows);
+                } else if (nsbLiveRows.length) {
+                    renderAllNSBLiveRows();
+                }
+            } else if (currentMode === 'official') {
+                renderAllTestResults();
+            }
             const priorities = getSortPriorities();
             if (!priorities.length) return showNoticeCard('请选择排序优先级');
             if (sortModalMode === 'nsb') applyNSBSort(priorities);
@@ -5613,14 +5926,27 @@
             const filter = document.getElementById('resultIPTypeFilter')?.value || 'all';
             const qualified = document.getElementById('resultQualifiedFilter')?.value || 'all';
             if (currentMode === 'nsb') {
-                return rows.filter((row) => matchesIPTypeFilter(row.ipType, filter) && matchesQualifiedFilter(row, qualified));
+                return rows.filter((row) => matchesIPTypeFilter(row.ipType, filter) && matchesQualifiedFilter(row, qualified) && exportLatencyLossMatch(row));
             }
-            return rows.filter((row) => matchesIPTypeFilter(getOfficialIPType(row), filter) && matchesOfficialQualifiedFilter(row, qualified));
+            return rows.filter((row) => matchesIPTypeFilter(getOfficialIPType(row), filter) && matchesOfficialQualifiedFilter(row, qualified) && exportLatencyLossMatch(row));
+        }
+
+        function exportLatencyLossMatch(row) {
+            let latencyFilter = parseFloat(document.getElementById('resultLatencyFilter')?.value);
+            if (!Number.isFinite(latencyFilter) || latencyFilter < 0) latencyFilter = 0;
+            let lossFilter = parseFloat(document.getElementById('resultLossFilter')?.value);
+            if (!Number.isFinite(lossFilter)) lossFilter = 100;
+            lossFilter = Math.min(100, Math.max(0, lossFilter));
+            const latencyMs = latencyMsForFilter(row.latency);
+            const lossPct = parseFilterNumber(row.lossRate);
+            if (latencyFilter > 0 && !(Number.isFinite(latencyMs) && latencyMs < latencyFilter)) return false;
+            if (lossFilter < 100 && !(Number.isFinite(lossPct) && lossPct < lossFilter)) return false;
+            return true;
         }
 
         function getDisplayedResultRows(mode) {
             if (currentMode === 'nsb') {
-                return getNSBResultObjects().filter((row) => matchesIPTypeFilter(row.ipType, nsbTableIPTypeFilter) && matchesQualifiedFilter(row, nsbTableQualifiedFilter));
+                return getNSBResultObjects().filter((row) => matchesIPTypeFilter(row.ipType, nsbTableIPTypeFilter) && matchesQualifiedFilter(row, nsbTableQualifiedFilter) && matchesLatencyLossFilter(latencyMsForFilter(row.latency), parseFilterNumber(row.lossRate)));
             }
             if (mode === 'test') {
                 return getFilteredOfficialTestData().map(testResultToObject);
@@ -5629,7 +5955,7 @@
         }
 
         function scanResultToObject(r) {
-            return { ip: r.IP || '', port: String(r.Port ?? ''), ipport: `${r.IP || ''}:${r.Port ?? ''}`, dc: r.DataCenter || '', dcCountry: r.DCCountry || '', region: r.Region || '', city: r.City || '', latency: r.LatencyStr || '' };
+            return { ip: r.IP || '', port: String(r.Port ?? ''), ipport: `${r.IP || ''}:${r.Port ?? ''}`, dc: r.DataCenter || '', dcCountry: r.DCCountry || '', region: r.Region || '', city: r.City || '', latency: r.LatencyStr || '', lossRate: r.LossRate != null ? `${(r.LossRate * 100).toFixed(0)}%` : '' };
         }
 
         function testResultToObject(r) {
@@ -5645,6 +5971,7 @@
                 city: scan.City || r.City || '',
                 latency: `${(r.AvgLatency / 1_000_000).toFixed(0)}ms`,
                 speed: r.Speed || '未测速',
+                lossRate: r.LossRate != null ? `${(r.LossRate * 100).toFixed(0)}%` : '',
             };
         }
 
@@ -5966,8 +6293,23 @@
                     defaultSpeedTestUrl = speedDefault || defaultSpeedTestUrl;
                     applySpeedUrlConfig('officialSpeedUrl', 'officialSpeedUrlPreset', speedDefault);
                     applySpeedUrlConfig('nsbSpeedUrl', 'nsbSpeedUrlPreset', speedDefault);
+                    applySpeedURLStatus(msg.data.speedURLStatus);
+                    applyProxyStatus(msg.data.proxyStatus);
                     renderVersionInfo(msg.data || {});
                     autoLoadConfig();
+                    break;
+                case 'speed_url_status':
+                    applySpeedURLStatus(msg.data || {});
+                    break;
+                case 'proxy_status':
+                    applyProxyStatus(msg.data || {});
+                    break;
+                case 'proxy_updated':
+                    applyProxyStatus(msg.data || {}); {
+                        const input = document.getElementById('proxyInput');
+                        if (input && (msg.data?.saved !== false)) input.value = '';
+                    }
+                    showNoticeCard((msg.data && msg.data.message) || '代理设置已保存并生效');
                     break;
                 case 'version_info':
                     renderVersionInfo(msg.data || {});
@@ -6120,6 +6462,7 @@
                             updateQualifiedSpeedProgress(p.current || 0, p.total || 1);
                         } else {
                             updateProgress(p.current || 0, p.total || 1, `${txt}`);
+                            if (p.phase === 'reallink') progressBar.style.animation = 'none';
                         }
                     }
                     break;
@@ -6166,6 +6509,7 @@
                 case 'nsb_csv_complete':
                     const wasStoppingNSB = isStoppingTask;
                     finishRunningTask('✨ 开始扫描与测试');
+                    nsbReallinkRunning = false;
                     nsbStopHandledByComplete = wasStoppingNSB;
                     nsbHeaders = msg.data.headers || [];
                     nsbRows = msg.data.rows || [];
@@ -6239,6 +6583,9 @@
                     finishRunningTask('✨ 开始扫描与测试');
                 } else if (nsbBatchSpeedRunning) {
                     nsbBatchSpeedRunning = false;
+                    finishRunningTask('✨ 开始扫描与测试');
+                } else if (nsbReallinkRunning) {
+                    nsbReallinkRunning = false;
                     finishRunningTask('✨ 开始扫描与测试');
                 }
                 resetCurrentSpeedButton();

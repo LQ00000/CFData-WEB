@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -94,6 +93,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		"proxyWarning":     !skipGeoCheck && (!cfCountryOK || shouldWarnProxyCountry(cfCountry)),
 		"geoCheckOK":       cfCountryOK,
 		"skipGeoCheck":     skipGeoCheck,
+		"speedURLStatus":   speedURLStatusPayload(),
+		"proxyStatus":      map[string]interface{}{"configured": managementProxyConfigured(), "source": proxySourceLabel()},
 	})
 	if backgroundSession := currentBackgroundTaskSession(); backgroundSession != nil {
 		session.sendWSMessage("background_task_found", backgroundSession.backgroundSummary())
@@ -281,7 +282,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				fileContent := params.FileContent
 				if hasSourceURL {
 					session.sendWSMessage("log", "正在获取非标网络输入: "+params.SourceURL)
-					content, err := getURLContentWithContext(ctx, params.SourceURL)
+					content, err := getURLContentViaProxy(ctx, params.SourceURL)
 					if err != nil {
 						if ctx.Err() != nil {
 							return
@@ -292,7 +293,45 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 					fileName = params.SourceURL
 					fileContent = content
 				}
-				runNSBTask(ctx, session, fileName, fileContent, params.OutFile, params.MaxThreads, params.FallbackPort, params.SpeedTest, params.SpeedURL, params.EnableTLS, params.Delay, params.ResultLimit, params.DC, params.SpeedMin, params.SpeedLimit, params.Compact, scanMode)
+				runNSBTask(ctx, session, fileName, fileContent, params.OutFile, params.MaxThreads, params.FallbackPort, params.SpeedTest, params.SpeedURL, params.EnableTLS, params.Delay, params.ResultLimit, params.DC, params.SpeedMin, params.SpeedLimit, params.Compact, scanMode, params.RelinkHost)
+			})
+		},
+		"start_nsb_reallink": func(data json.RawMessage) {
+			var params startNSBReallinkRequest
+			if err := json.Unmarshal(data, &params); err != nil {
+				session.sendWSMessage("error", "start_nsb_reallink 参数解析失败")
+				return
+			}
+			params.RelinkHost = strings.TrimSpace(params.RelinkHost)
+			if params.RelinkHost == "" {
+				session.sendWSMessage("error", "链路复验未配置探针域名（relinkhost）")
+				return
+			}
+			if params.SpeedTest < 0 {
+				params.SpeedTest = 0
+			}
+			if params.SpeedLimit < 0 {
+				params.SpeedLimit = 0
+			}
+			if params.SpeedMin < 0 {
+				params.SpeedMin = 0
+			}
+			if strings.TrimSpace(params.SpeedURL) == "" {
+				params.SpeedURL = speedTestURL
+			}
+			if strings.TrimSpace(params.OutFile) == "" {
+				params.OutFile = "ip.csv"
+			}
+			if len(params.Results) == 0 {
+				session.sendWSMessage("error", "没有可复验的非标结果")
+				return
+			}
+			scanMode := params.ScanMode
+			if scanMode == "" {
+				scanMode = scanModeTCPing
+			}
+			session.startTaskNamed("链路复验", "nsb", map[string]interface{}{"outFile": params.OutFile, "speedTest": params.SpeedTest, "speedLimit": params.SpeedLimit}, func(ctx context.Context, session *appSession) {
+				runNSBReallinkTask(ctx, session, params.Results, params.RelinkHost, params.SpeedTest, params.SpeedURL, params.EnableTLS, params.SpeedMin, params.SpeedLimit, params.Compact, scanMode, params.OutFile)
 			})
 		},
 		"start_nsb_speed_batch": func(data json.RawMessage) {
@@ -394,8 +433,44 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		"reset_all_config": func(data json.RawMessage) {
 			resetAllConfigFiles(session)
 		},
+		"get_speed_url_status": func(data json.RawMessage) {
+			session.sendWSMessage("speed_url_status", speedURLStatusPayload())
+		},
+		"get_management_proxy": func(data json.RawMessage) {
+			session.sendWSMessage("proxy_status", map[string]interface{}{"configured": managementProxyConfigured(), "label": proxyStatusLabel(), "source": proxySourceLabel()})
+		},
+		"set_management_proxy": func(data json.RawMessage) {
+			var params struct {
+				Value string `json:"value"`
+			}
+			if err := json.Unmarshal(data, &params); err != nil {
+				session.sendWSMessage("error", "set_management_proxy 参数解析失败")
+				return
+			}
+			value := strings.TrimSpace(params.Value)
+			if err := setManagementProxy(value); err != nil {
+				session.sendWSMessage("error", "代理设置无效: "+err.Error())
+				return
+			}
+			status := map[string]interface{}{"configured": managementProxyConfigured(), "label": proxyStatusLabel(), "source": proxySourceLabel()}
+			saveErr := updateProxyInConfigFile(defaultCLIConfigPath(), managementProxyRaw)
+			if saveErr != nil {
+				status["saved"] = false
+				status["message"] = "代理已生效但写入配置文件失败，重启后失效: " + saveErr.Error()
+			} else {
+				status["saved"] = true
+			}
+			if value == "" {
+				if saveErr != nil {
+					status["message"] = "代理已清除但写入配置文件失败，重启后旧代理将重新生效: " + saveErr.Error()
+				} else {
+					status["message"] = "代理已清除（回退系统环境变量代理）"
+				}
+			}
+			session.sendWSMessage("proxy_updated", status)
+		},
 		"get_config": func(data json.RawMessage) {
-			cfgPath := filepath.Join(filepath.Dir(os.Args[0]), "cfdata-config.json")
+			cfgPath := defaultCLIConfigPath()
 			raw, err := os.ReadFile(cfgPath)
 			if err != nil {
 				session.sendWSMessage("error", "读取配置文件失败: "+err.Error())
@@ -436,7 +511,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 					session.sendWSMessage("github_upload_status", map[string]interface{}{"attempt": attempt, "total": total, "message": fmt.Sprintf("第 %d/%d 次上传失败，准备重试: %s", attempt, total, err.Error())})
 				})
 				if err != nil {
-					session.sendWSMessage("github_upload_error", map[string]interface{}{"path": params.Path, "message": "上传 GitHub 失败: " + err.Error(), "silent": params.Silent})
+					session.sendWSMessage("github_upload_error", map[string]interface{}{"path": params.Path, "message": "上传 GitHub 失败: " + err.Error() + "（可在设置菜单配置代理后重试）", "silent": params.Silent})
 					return
 				}
 				session.sendWSMessage("github_upload_result", map[string]interface{}{"path": params.Path, "rawURL": downloadURL, "silent": params.Silent})
@@ -455,7 +530,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 					}
 				})
 				if err != nil {
-					session.sendWSMessage("edgetunnel_upload_error", map[string]interface{}{"message": "edgetunnel 上传失败: " + err.Error(), "silent": params.Silent})
+					session.sendWSMessage("edgetunnel_upload_error", map[string]interface{}{"message": "edgetunnel 上传失败: " + err.Error() + "（可在设置菜单配置代理后重试）", "silent": params.Silent})
 					return
 				}
 				session.sendWSMessage("edgetunnel_upload_result", map[string]interface{}{"message": "上传成功", "silent": params.Silent})
@@ -552,7 +627,7 @@ func uploadGitHubContent(ctx context.Context, params githubUploadRequest) (strin
 		return "", err
 	}
 	setGitHubHeaders(req, params.Token)
-	resp, err := upstreamHTTPClient.Do(req)
+	resp, err := managementHTTPClient(0).Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -580,7 +655,7 @@ func getGitHubContentSHA(ctx context.Context, apiURL, token, branch string) (str
 		return "", err
 	}
 	setGitHubHeaders(req, token)
-	resp, err := upstreamHTTPClient.Do(req)
+	resp, err := managementHTTPClient(0).Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -661,7 +736,7 @@ func edgetunnelLogin(ctx context.Context, host, password string) (*http.Cookie, 
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := upstreamHTTPClient.Do(req)
+	resp, err := managementHTTPClient(0).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -691,7 +766,7 @@ func edgetunnelRead(ctx context.Context, host string, cookie *http.Cookie) (stri
 	}
 	req.AddCookie(cookie)
 	req.Header.Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	resp, err := upstreamHTTPClient.Do(req)
+	resp, err := managementHTTPClient(0).Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -711,7 +786,7 @@ func edgetunnelWrite(ctx context.Context, host string, cookie *http.Cookie, cont
 	}
 	req.AddCookie(cookie)
 	req.Header.Set("Content-Type", "text/plain")
-	resp, err := upstreamHTTPClient.Do(req)
+	resp, err := managementHTTPClient(0).Do(req)
 	if err != nil {
 		return err
 	}

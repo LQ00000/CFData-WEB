@@ -374,11 +374,11 @@ func runSettingsWizard(fileCfg *cliFileConfig) int {
 	fileCfg.Progress = idx == 0
 
 	colorIdx := boolChoiceIndex(fileCfg.NoColor)
-	idx, o = askChoice("无颜色输出", "终端出现乱码（如 cmd、部分 SSH 客户端）时建议开启", []string{"关闭", "开启"}, colorIdx)
+	idx, o = askChoice("无颜色输出", "终端出现乱码（如 cmd、部分 SSH 客户端）时建议开启", []string{"开启", "关闭"}, colorIdx)
 	if o != promptOK {
 		return o
 	}
-	fileCfg.NoColor = idx == 1
+	fileCfg.NoColor = idx == 0
 
 	debugIdx := 0
 	switch v := fmt.Sprintf("%v", fileCfg.Debug); v {

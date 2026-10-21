@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -33,7 +32,7 @@ func getLatestRelease(ctx context.Context) (latestReleaseInfo, error) {
 	req.Header.Set("User-Agent", "CFData-WEB/"+appVersion)
 	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
-	resp, err := upstreamHTTPClient.Do(req.WithContext(ctx))
+	resp, err := managementHTTPClient(0).Do(req.WithContext(ctx))
 	if err != nil {
 		return latestReleaseInfo{}, err
 	}
@@ -191,6 +190,7 @@ func main() {
 	configureHTTPClients()
 	startupSpeedTestURL := speedTestURL
 	if !cliCfg.enabled {
+		ensureSpeedURLAvailability()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		resolvedSpeedURL, speedISP, err := resolveStartupSpeedTestURL(ctx, speedTestURL)
 		cancel()
@@ -207,12 +207,13 @@ func main() {
 	webSessionTTL = time.Duration(webSessionMinutes) * time.Minute
 
 	if !cliCfg.enabled {
-		cfgPath := filepath.Join(filepath.Dir(os.Args[0]), "cfdata-config.json")
+		cfgPath := defaultCLIConfigPath()
 		if _, created, err := loadOrCreateCLIConfig(cfgPath); err != nil && !errors.Is(err, errCLIConfigCreated) {
 			fmt.Printf("[config] 加载配置文件失败: %v\n", err)
 		} else if created {
 			fmt.Printf("[config] 已生成配置文件模板: %s\n", cfgPath)
 		}
+		applyManagementProxyFromConfigFile(cfgPath)
 	}
 	initLocations()
 	if cliCfg.enabled {
