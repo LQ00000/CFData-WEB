@@ -80,7 +80,7 @@ func resolveStartupSpeedTestURL(ctx context.Context, rawURL string) (string, isp
 		return autoSpeedURLValue, info, err
 	}
 	if isChinaMobileISP(info) {
-		// 移动网络：优先 CM/移动专属，过滤不可用项；全部不可用回退 CF 官方
+
 		usable := make([]string, 0, 2)
 		for _, candidate := range []string{cmSpeedURL, mobileDedicatedSpeedURL} {
 			if available, _ := isSpeedURLAvailable(candidate); available {
@@ -99,7 +99,7 @@ func resolveStartupSpeedTestURL(ctx context.Context, rawURL string) (string, isp
 		setAutoSpeedURLDefault(pickRandomSpeedURL(usable))
 		return autoSpeedURLValue, info, nil
 	}
-	// 非移动：CF 官方优先；不可用则改用任一可用内置；全部不可用强制恢复 CF 官方
+
 	if available, known := isSpeedURLAvailable(cloudflareSpeedURL); known && !available {
 		if alt := firstAvailableSpeedURL(cmSpeedURL, mobileDedicatedSpeedURL); alt != "" {
 			setAutoSpeedURLDefault(alt)
@@ -220,7 +220,6 @@ func speedURLLabel(rawURL string) string {
 	}
 }
 
-// speedURLCandidates 返回需要做可用性测试的地址：全部内置 + 已输入的自定义测速地址。
 func speedURLCandidates() []string {
 	candidates := []string{cloudflareSpeedURL, cmSpeedURL, mobileDedicatedSpeedURL}
 	custom := strings.TrimSpace(speedTestURL)
@@ -239,7 +238,6 @@ func speedURLCandidates() []string {
 	return candidates
 }
 
-// speedURLProbeTarget 将大体积下载参数替换为小体积探测参数，避免可用性测试拉取大文件。
 func speedURLProbeTarget(rawURL string) string {
 	marker := "bytes="
 	idx := strings.Index(rawURL, marker)
@@ -256,7 +254,6 @@ func speedURLProbeTarget(rawURL string) string {
 	return rawURL[:idx+len(marker)] + "1024" + rawURL[end:]
 }
 
-// checkSpeedURLAvailability 对单个测速地址做可用性测试：小体积 GET，2xx 且能读到数据即视为可用。
 func checkSpeedURLAvailability(rawURL string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -281,7 +278,6 @@ func checkSpeedURLAvailability(rawURL string) bool {
 	return n > 0
 }
 
-// ensureSpeedURLAvailability 启动时对全部候选测速地址并行做一次可用性测试（仅一次，结果缓存）。
 func ensureSpeedURLAvailability() {
 	speedURLAvailabilityState.Lock()
 	if speedURLAvailabilityState.ready {
@@ -321,7 +317,6 @@ func isSpeedURLAvailable(rawURL string) (available bool, known bool) {
 	return available, known
 }
 
-// firstAvailableSpeedURL 按给定顺序返回第一个可用（或未测过）的地址；全部不可用返回空。
 func firstAvailableSpeedURL(order ...string) string {
 	for _, candidate := range order {
 		if available, _ := isSpeedURLAvailable(candidate); available {
@@ -347,7 +342,6 @@ func speedURLStatusPayload() map[string]interface{} {
 	return map[string]interface{}{"ready": speedURLAvailabilityState.ready, "urls": entries}
 }
 
-// logSpeedURLAvailabilitySummary CLI 端输出可用性测试摘要。
 func logSpeedURLAvailabilitySummary() {
 	speedURLAvailabilityState.RLock()
 	if !speedURLAvailabilityState.ready {

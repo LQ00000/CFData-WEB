@@ -113,6 +113,7 @@ type cliFileConfig struct {
 	NSBDC           string  `json:"nsbdc"`
 	Relink          bool    `json:"relink"`
 	RelinkHost      string  `json:"relinkhost"`
+	Proxy           string  `json:"proxy"`
 	OutIPType       string  `json:"outiptype"`
 	OutQualified    string  `json:"outqualified"`
 	TLS             bool    `json:"nsbtls"`
@@ -266,10 +267,13 @@ var (
 		{name: "nsbspeedlimit", description: "非标模式测速结果上限；0 表示关闭测速", defaultValue: "5"},
 		{name: "relink", description: "链路复验开关；开启后扫描完成时对结果做真实链路验证，不可用的候选将被剔除", defaultValue: "true"},
 		{name: "relinkhost", description: "链路复验探针域名；默认使用内置公共探针，配合 relink 开关使用", defaultValue: "probe.609909.xyz"},
+		{name: "proxy", description: "管理面代理；下载 ASN 库/locations、版本检查上传 GitHub/订阅等走此代理，扫描测速不受影响。支持 socks5://、socks5h://、http://、https://，留空使用系统环境变量代理", defaultValue: ""},
 	}
 )
 
 var errCLIConfigCreated = errors.New("CLI 配置文件已生成")
+
+var proxyFlag = ""
 
 func registerCLIFlags() *cliConfig {
 	cfg := &cliConfig{}
@@ -303,6 +307,7 @@ func registerCLIFlags() *cliConfig {
 	flag.IntVar(&cfg.resultLimit, "nsbresultlimit", 1000, "非标模式延迟测试结果上限；必须为非 0 正整数")
 	flag.BoolVar(&cfg.relink, "relink", true, "链路复验开关；开启后非标扫描完成时对结果做真实链路验证（TCP+TLS+HTTP 访问探针），不可用的候选将被剔除")
 	flag.StringVar(&cfg.relinkHost, "relinkhost", "probe.609909.xyz", "链路复验探针域名；默认使用内置公共探针，配合 -relink 开关使用")
+	flag.StringVar(&proxyFlag, "proxy", "", "管理面代理地址，支持 socks5://、socks5h://、http://、https://；下载/版本检查/上传走此代理，扫描测速不受影响；留空走系统环境变量代理")
 	flag.Float64Var(&cfg.nsbSpeedMin, "nsbspeedmin", 0.1, "非标模式测速结果阈值，单位 MB/s")
 	flag.IntVar(&cfg.nsbSpeedLimit, "nsbspeedlimit", 5, "非标模式测速结果上限；0 表示关闭测速")
 	flag.BoolVar(&cfg.showProgress, "progress", true, "CLI 模式输出进度日志")
@@ -605,7 +610,6 @@ func mergeCLIExportConfig(dst *cliExportConfig, src cliExportConfig, onlyProvide
 	}
 }
 
-// cliFileConfigJSONKeys 返回配置结构体全部 json 字段名，作为新模板的 key 基准。
 func cliFileConfigJSONKeys() map[string]bool {
 	keys := make(map[string]bool)
 	t := reflect.TypeOf(cliFileConfig{})
@@ -620,16 +624,10 @@ func cliFileConfigJSONKeys() map[string]bool {
 	return keys
 }
 
-// migrateConfigFileToLatest 新迁移机制：
-//   - 文件 key 与新模板 key 完全一致且 _config_version 为当前版本 → 不做任何改动
-//   - 无旧名键（仅版本旧或缺新键）→ 静默迁移：备份原文件 → 以新模板为基准把同名值迁入 → 写回新文件
-//   - 文件存在新模板不认识的旧名键 → 交互提示「配置文件存在更新，是否迁移同变量名的配置？」
-//     选 y：同上静默流程（只保留同名键，新增/改名项为默认值，提示用户自行设置）
-//     选 n 或非交互环境（stdin=/dev/null）：不改文件继续运行，下次启动再提示
 func migrateConfigFileToLatest(path string, data []byte) ([]byte, error) {
 	var raw map[string]interface{}
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return data, nil // 非 JSON：交由后续解析流程报错
+		return data, nil
 	}
 	templateKeys := cliFileConfigJSONKeys()
 	cfgObj := raw
@@ -655,7 +653,7 @@ func migrateConfigFileToLatest(path string, data []byte) ([]byte, error) {
 		version = strings.TrimSpace(version)
 	}
 	if len(unknown) == 0 && len(missing) == 0 && version == appVersion {
-		return data, nil // 与最新模板完全一致
+		return data, nil
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
@@ -679,7 +677,7 @@ func migrateConfigFileToLatest(path string, data []byte) ([]byte, error) {
 	}
 	newCfg := defaultCLIFileConfig()
 	if cfgBytes, err := json.Marshal(cfgObj); err == nil {
-		_ = json.Unmarshal(cfgBytes, &newCfg) // 同名值迁入新模板基准；缺键保持默认；旧名键自然丢弃
+		_ = json.Unmarshal(cfgBytes, &newCfg)
 	}
 	if err := writeCLIConfigTemplate(path, newCfg); err != nil {
 		return data, fmt.Errorf("写入迁移后的配置失败 %s: %w", path, err)
@@ -799,6 +797,7 @@ func buildCLIConfigHelp() []cliConfigHelp {
 		{Name: "nsbspeedlimit", Description: "非标模式测速结果上限；0 表示关闭测速", Default: "5"},
 		{Name: "relink", Description: "链路复验开关；开启后非标扫描完成时对结果做真实链路验证（TCP+TLS+HTTP 访问探针域），不可用的候选将被剔除", Default: "true", Options: []string{"true", "false"}},
 		{Name: "relinkhost", Description: "链路复验探针域名；默认使用内置公共探针，配合 relink 开关使用", Default: "probe.609909.xyz"},
+		{Name: "proxy", Description: "管理面代理；下载 ASN 库/locations、版本检查上传 GitHub/订阅等走此代理，扫描测速不受影响。支持 socks5://、socks5h://、http://、https://，留空使用系统环境变量代理", Default: ""},
 		{Name: "outformat", Description: "导出/上传内容格式", Default: "txt", Options: []string{"csv", "txt"}},
 		{Name: "outfields", Description: "导出字段；支持 compact、all、ipport 或逗号分隔字段 key；自定义字段可写在这里排序", Default: "compact", Options: []string{"compact", "all", "ipport", "ipport,dc,loc", "ipport,latency,dc,loc"}},
 		{Name: "outcustom", Description: "自定义导出字段，格式 标题:内容，多项用逗号分隔；未在 outfields 中排序时默认追加到最后。兼容 key=标题:内容", Default: ""},
@@ -919,6 +918,14 @@ func applyCLIFileConfig(cfg *cliConfig, fileCfg cliFileConfig, provided map[stri
 		cfg.relink = fileCfg.Relink
 	}
 	setString("relinkhost", &cfg.relinkHost, fileCfg.RelinkHost)
+
+	proxyValue := strings.TrimSpace(fileCfg.Proxy)
+	if provided["proxy"] {
+		proxyValue = strings.TrimSpace(proxyFlag)
+	}
+	if err := setManagementProxy(proxyValue); err != nil {
+		fmt.Printf("[proxy] 管理面代理配置无效，未启用: %v\n", err)
+	}
 
 	genericURL := speedTestURL
 	if isNSBRun {
@@ -1255,7 +1262,7 @@ func runNSBCLI(cfg *cliConfig) error {
 			return errors.New("-nsbsourceurl 必须是有效的 http/https 地址")
 		}
 		inputName = cfg.sourceURL
-		content, err = getURLContent(cfg.sourceURL)
+		content, err = getURLContentViaProxy(context.Background(), cfg.sourceURL)
 		if err != nil {
 			return fmt.Errorf("获取非标网络输入失败: %w", err)
 		}

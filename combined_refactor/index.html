@@ -1644,6 +1644,17 @@
             </div>
             <div class="settings-title">本地缓存</div>
             <button class="danger-btn" onclick="resetAllConfig()">恢复全部默认配置</button>
+
+            <div class="settings-title" style="margin-top:12px;">🌐 管理面代理</div>
+            <div class="upload-status" id="proxyStatusText">未启用（可用系统环境变量代理）</div>
+            <input id="proxyInput" type="text" placeholder="socks5://127.0.0.1:1080 或 http://127.0.0.1:8080" style="width:100%;margin-top:6px;">
+            <div class="theme-options" style="display:flex;gap:8px;margin-top:6px;">
+                <button class="menu-btn" style="flex:1;" onclick="saveManagementProxy()">保存</button>
+                <button class="menu-btn" style="flex:1;" onclick="clearManagementProxy()">清除</button>
+            </div>
+            <div style="font-size:11px;line-height:1.5;color:var(--text-secondary);margin-top:6px;">
+                仅作用于下载 ASN 库/locations、版本检查、GitHub/订阅上传等管理操作；扫描与测速保持直连。程序配置优先生效，未配置时使用系统环境变量代理。
+            </div>
         </div>
 
         <div id="configMenu" class="settings-menu hidden">
@@ -2174,6 +2185,10 @@
                     <div class="modal-field full github-field">
                         <label>上传状态</label>
                         <div class="upload-status" id="githubUploadStatus">等待上传</div>
+                    </div>
+                    <div class="modal-field full">
+                        <label>上传失败提示</label>
+                        <div class="upload-status" id="uploadProxyHint">上传失败？可在右上角设置菜单配置代理后重试；支持程序配置（socks5://、http:// 等）与系统环境变量代理，扫描测速不受影响。</div>
                     </div>
                     <div class="modal-field edgetunnel-field">
                         <label>edgetunnel 账户</label>
@@ -2719,7 +2734,33 @@
             syncSpeedUrlPreset(targetId, presetId);
         }
 
-        // applySpeedURLStatus 把后端测速地址可用性同步到两个测速地址选择框（不可用的加后缀标注）。
+        function applyProxyStatus(payload) {
+            const enabled = payload && payload.configured && payload.label;
+            const statusEl = document.getElementById('proxyStatusText');
+            if (statusEl) statusEl.textContent = enabled ? `已启用: ${payload.label}` : '未启用（可用系统环境变量代理）';
+            const hintEl = document.getElementById('uploadProxyHint');
+            if (hintEl) {
+                hintEl.textContent = enabled
+                    ? `上传失败？可在设置菜单更换/清除代理后重试；当前代理: ${payload.label}。扫描测速不受代理影响。`
+                    : '上传失败？可在设置菜单配置代理后重试；支持程序配置（socks5://、http:// 等）与系统环境变量代理，扫描测速不受影响。';
+            }
+        }
+
+        function saveManagementProxy() {
+            const input = document.getElementById('proxyInput');
+            const value = input ? input.value.trim() : '';
+            if (!value) return showNoticeCard('请输入代理地址，例如 socks5://127.0.0.1:1080；(清除请用「清除」按钮)');
+            if (!wsSend({ type: 'set_management_proxy', data: { value } })) {
+                showNoticeCard('与服务端的连接尚未就绪，请稍后再试');
+            }
+        }
+
+        function clearManagementProxy() {
+            if (!wsSend({ type: 'set_management_proxy', data: { value: '' } })) {
+                showNoticeCard('与服务端的连接尚未就绪，请稍后再试');
+            }
+        }
+
         function applySpeedURLStatus(payload) {
             if (!payload || !Array.isArray(payload.urls)) return;
             const entries = payload.urls;
@@ -4324,7 +4365,6 @@
             return status === filter;
         }
 
-        // 测速结果数值筛选：延迟低于 x ms / 丢包低于 y %（0 / 100 表示不限制）。
         function parseFilterNumber(value) {
             const text = String(value ?? '').trim().replace('%', '').replace(/ms$/i, '').trim();
             const parsed = parseFloat(text);
@@ -5873,7 +5913,6 @@
             return rows.filter((row) => matchesIPTypeFilter(getOfficialIPType(row), filter) && matchesOfficialQualifiedFilter(row, qualified) && exportLatencyLossMatch(row));
         }
 
-        // 导出弹窗的延迟/丢包筛选（0ms / 100% 表示不限制）。
         function exportLatencyLossMatch(row) {
             let latencyFilter = parseFloat(document.getElementById('resultLatencyFilter')?.value);
             if (!Number.isFinite(latencyFilter) || latencyFilter < 0) latencyFilter = 0;
@@ -6237,11 +6276,20 @@
                     applySpeedUrlConfig('officialSpeedUrl', 'officialSpeedUrlPreset', speedDefault);
                     applySpeedUrlConfig('nsbSpeedUrl', 'nsbSpeedUrlPreset', speedDefault);
                     applySpeedURLStatus(msg.data.speedURLStatus);
+                    applyProxyStatus(msg.data.proxyStatus);
                     renderVersionInfo(msg.data || {});
                     autoLoadConfig();
                     break;
                 case 'speed_url_status':
                     applySpeedURLStatus(msg.data || {});
+                    break;
+                case 'proxy_updated':
+                    applyProxyStatus(msg.data || {});
+                    {
+                        const input = document.getElementById('proxyInput');
+                        if (input) input.value = '';
+                    }
+                    showNoticeCard((msg.data && msg.data.message) || '代理设置已保存并生效');
                     break;
                 case 'version_info':
                     renderVersionInfo(msg.data || {});

@@ -902,9 +902,6 @@ func runNSBTask(ctx context.Context, session *appSession, fileName, fileContent,
 	session.sendWSMessage("log", fmt.Sprintf("非标优选完成，结果文件: %s", outFile))
 }
 
-// checkReallinkCandidate 对单个候选做真实链路验证：TCP 连接 → TLS 握手（SNI=探针域，不验证书，
-// 与参考实现行为一致）→ 真实 HTTP GET → 判定响应为探针 JSON 且包含有效出口 IP。
-// 返回 (是否可用, 失败原因, 失败明细)。
 func checkReallinkCandidate(ctx context.Context, ipAddr string, port int, probeHost string) (bool, string, string) {
 	conn, err := dialContextWithTimeout(ctx, "tcp", net.JoinHostPort(ipAddr, strconv.Itoa(port)), timeout)
 	if err != nil {
@@ -950,8 +947,6 @@ func checkReallinkCandidate(ctx context.Context, ipAddr string, port int, probeH
 	return true, "", ""
 }
 
-// runNSBReallinkFilter 对候选结果做链路复验并剔除不可用项。
-// 复验被终止时保留全部结果（与任务取消时的整理语义一致）。
 func runNSBReallinkFilter(ctx context.Context, session *appSession, results []iptestResult, probeHost string) ([]iptestResult, int, int) {
 	total := len(results)
 	session.sendWSMessage("log", fmt.Sprintf("开始链路复验：%d 条记录，探针=%s，并发=10", total, probeHost))
@@ -1011,7 +1006,6 @@ func runNSBReallinkFilter(ctx context.Context, session *appSession, results []ip
 	return kept, len(kept), removed
 }
 
-// runNSBReallinkTask Web 端手动链路复验任务：复验剔除 → 测速（若开启）→ 导出 CSV。
 func runNSBReallinkTask(ctx context.Context, session *appSession, rows []nsbScanMessage, reallinkHost string, speedTest int, speedURL string, enableTLS bool, speedMin float64, speedLimit int, compact bool, scanMode string, outFile string) {
 	reallinkHost = strings.TrimSpace(reallinkHost)
 	if reallinkHost == "" {

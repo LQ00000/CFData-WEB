@@ -32,7 +32,7 @@ func initLocations() {
 
 	if _, err = os.Stat(filename); os.IsNotExist(err) {
 		sendLog("本地 locations.json 不存在，正在从服务器下载...")
-		content, err := getURLContent(url)
+		content, err := getURLContentViaProxy(context.Background(), url)
 		if err != nil {
 			sendLog("获取位置信息失败: " + err.Error())
 			sendLog("⚠️ locationMap 未就绪，后续扫描结果的 城市/地区 列将为空；可删除本地缓存（Web 端右上角设置）或检查网络后重启")
@@ -185,6 +185,38 @@ func getURLBytesWithContext(ctx context.Context, targetURL string) ([]byte, erro
 		return nil, err
 	}
 	return data, nil
+}
+
+func getURLBytesWithContextClient(ctx context.Context, targetURL string, client *http.Client) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("请求失败: %s", resp.Status)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func getURLBytesViaProxy(ctx context.Context, targetURL string) ([]byte, error) {
+	return getURLBytesWithContextClient(ctx, targetURL, managementHTTPClient(0))
+}
+
+func getURLContentViaProxy(ctx context.Context, targetURL string) (string, error) {
+	data, err := getURLBytesViaProxy(ctx, targetURL)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 func getFileContent(filename string) (string, error) {

@@ -162,6 +162,7 @@ CLI 可通过 `-offurl`/`-nsburl` 指定：
 -nsbspeedlimit    非标测速合格结果上限
 -relink           链路复验开关（默认开启）；扫描完成时对结果做真实链路验证，不可用的候选将被剔除
 -relinkhost       链路复验探针域名；默认使用内置公共探针，配合 -relink 开关使用
+-proxy            管理面代理地址（支持 socks5://、socks5h://、http://、https://）；下载 ASN 库/locations、版本检查、GitHub/订阅上传走此代理，扫描测速不受影响；留空走系统环境变量代理
 ```
 
 完整参数可运行：

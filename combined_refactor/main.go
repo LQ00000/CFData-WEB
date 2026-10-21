@@ -33,7 +33,7 @@ func getLatestRelease(ctx context.Context) (latestReleaseInfo, error) {
 	req.Header.Set("User-Agent", "CFData-WEB/"+appVersion)
 	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
-	resp, err := upstreamHTTPClient.Do(req.WithContext(ctx))
+	resp, err := managementHTTPClient(0).Do(req.WithContext(ctx))
 	if err != nil {
 		return latestReleaseInfo{}, err
 	}
@@ -214,6 +214,7 @@ func main() {
 		} else if created {
 			fmt.Printf("[config] 已生成配置文件模板: %s\n", cfgPath)
 		}
+		applyManagementProxyFromConfigFile(cfgPath)
 	}
 	initLocations()
 	if cliCfg.enabled {
