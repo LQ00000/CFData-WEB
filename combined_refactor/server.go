@@ -94,6 +94,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		"proxyWarning":     !skipGeoCheck && (!cfCountryOK || shouldWarnProxyCountry(cfCountry)),
 		"geoCheckOK":       cfCountryOK,
 		"skipGeoCheck":     skipGeoCheck,
+		"speedURLStatus":   speedURLStatusPayload(),
 	})
 	if backgroundSession := currentBackgroundTaskSession(); backgroundSession != nil {
 		session.sendWSMessage("background_task_found", backgroundSession.backgroundSummary())
@@ -431,6 +432,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		},
 		"reset_all_config": func(data json.RawMessage) {
 			resetAllConfigFiles(session)
+		},
+		"get_speed_url_status": func(data json.RawMessage) {
+			session.sendWSMessage("speed_url_status", speedURLStatusPayload())
 		},
 		"get_config": func(data json.RawMessage) {
 			cfgPath := filepath.Join(filepath.Dir(os.Args[0]), "cfdata-config.json")

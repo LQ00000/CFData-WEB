@@ -2697,6 +2697,24 @@
             syncSpeedUrlPreset(targetId, presetId);
         }
 
+        // applySpeedURLStatus 把后端测速地址可用性同步到两个测速地址选择框（不可用的加后缀标注）。
+        function applySpeedURLStatus(payload) {
+            if (!payload || !Array.isArray(payload.urls)) return;
+            const entries = payload.urls;
+            const presetIds = ['officialSpeedUrlPreset', 'nsbSpeedUrlPreset'];
+            for (const presetId of presetIds) {
+                const preset = document.getElementById(presetId);
+                if (!preset) continue;
+                for (const opt of preset.options) {
+                    if (opt.value === AUTO_SPEED_URL_VALUE || opt.value === 'custom') continue;
+                    let label = opt.textContent.replace(/（不可用）$/, '');
+                    const entry = entries.find((item) => item.url === opt.value);
+                    if (entry && entry.tested && entry.available === false) label += '（不可用）';
+                    opt.textContent = label;
+                }
+            }
+        }
+
         function resetAllConfig() {
             showConfirmCard('这会清掉本地缓存文件：ips-v4.txt、ips-v6.txt、locations.json、GeoLite2-ASN.mmdb。\n要继续吗？', confirmResetAllConfig, '清理本地缓存');
         }
@@ -6091,8 +6109,12 @@
                     defaultSpeedTestUrl = speedDefault || defaultSpeedTestUrl;
                     applySpeedUrlConfig('officialSpeedUrl', 'officialSpeedUrlPreset', speedDefault);
                     applySpeedUrlConfig('nsbSpeedUrl', 'nsbSpeedUrlPreset', speedDefault);
+                    applySpeedURLStatus(msg.data.speedURLStatus);
                     renderVersionInfo(msg.data || {});
                     autoLoadConfig();
+                    break;
+                case 'speed_url_status':
+                    applySpeedURLStatus(msg.data || {});
                     break;
                 case 'version_info':
                     renderVersionInfo(msg.data || {});

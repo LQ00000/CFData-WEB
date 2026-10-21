@@ -368,6 +368,8 @@ func runCLI(cfg *cliConfig) error {
 }
 
 func applyCLISpeedDefault() {
+	ensureSpeedURLAvailability()
+	logSpeedURLAvailabilitySummary()
 	if !isAutoSpeedURL(speedTestURL) {
 		return
 	}

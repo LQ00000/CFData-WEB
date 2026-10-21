@@ -191,6 +191,7 @@ func main() {
 	configureHTTPClients()
 	startupSpeedTestURL := speedTestURL
 	if !cliCfg.enabled {
+		ensureSpeedURLAvailability()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		resolvedSpeedURL, speedISP, err := resolveStartupSpeedTestURL(ctx, speedTestURL)
 		cancel()
