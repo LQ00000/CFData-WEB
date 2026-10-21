@@ -1025,12 +1025,10 @@ func runNSBReallinkTask(ctx context.Context, session *appSession, rows []nsbScan
 
 	kept, _, _ := runNSBReallinkFilter(ctx, session, results, reallinkHost)
 	wasCanceled := ctx.Err() != nil
-	if !wasCanceled {
-		results = kept
-		if len(results) == 0 {
-			session.sendWSMessage("error", "链路复验后未发现可用 IP")
-			return
-		}
+	results = kept
+	if len(results) == 0 {
+		session.sendWSMessage("error", "链路复验后未发现可用 IP")
+		return
 	}
 	sortedRows := make([]nsbScanMessage, 0, len(results))
 	for i := range results {

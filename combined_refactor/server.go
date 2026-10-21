@@ -451,17 +451,21 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			status := map[string]interface{}{"configured": managementProxyConfigured(), "label": proxyStatusLabel()}
-			if err := updateProxyInConfigFile(defaultCLIConfigPath(), managementProxyRaw); err != nil {
+			saveErr := updateProxyInConfigFile(defaultCLIConfigPath(), managementProxyRaw)
+			if saveErr != nil {
 				status["saved"] = false
-				status["message"] = "代理已生效但写入配置文件失败，重启后失效: " + err.Error()
+				status["message"] = "代理已生效但写入配置文件失败，重启后失效: " + saveErr.Error()
 			} else {
 				status["saved"] = true
 			}
 			if value == "" {
-				session.sendWSMessage("proxy_updated", map[string]interface{}{"configured": false, "label": proxyStatusLabel(), "message": "代理已清除（回退系统环境变量代理）"})
-			} else {
-				session.sendWSMessage("proxy_updated", status)
+				if saveErr != nil {
+					status["message"] = "代理已清除但写入配置文件失败，重启后旧代理将重新生效: " + saveErr.Error()
+				} else {
+					status["message"] = "代理已清除（回退系统环境变量代理）"
+				}
 			}
+			session.sendWSMessage("proxy_updated", status)
 		},
 		"get_config": func(data json.RawMessage) {
 			cfgPath := filepath.Join(filepath.Dir(os.Args[0]), "cfdata-config.json")

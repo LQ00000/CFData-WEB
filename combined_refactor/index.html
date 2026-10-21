@@ -6563,6 +6563,9 @@
                 } else if (nsbBatchSpeedRunning) {
                     nsbBatchSpeedRunning = false;
                     finishRunningTask('✨ 开始扫描与测试');
+                } else if (nsbReallinkRunning) {
+                    nsbReallinkRunning = false;
+                    finishRunningTask('✨ 开始扫描与测试');
                 }
                 resetCurrentSpeedButton();
                 updateBatchSpeedButton();
